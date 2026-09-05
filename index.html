@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/png" href="assets/logitrading-favicon.png?v=4">
+<link rel="stylesheet" href="css/styles.css?v=30">
+</head>
+<body>
+<!--
+  Inventario de botones y acciones:
+  Header: Tabla maestra -> showPanel(6); Cotización final -> showPanel(7) + generarCotizacion().
+  Pasos: Servicio/Carga/Especiales/Analizador/Cotización -> showPanel(); Continuar -> continuarServicio(); Atrás -> showPanel().
+  Carga: Importar Excel/CSV -> importarArchivo(); Leer PDF -> importarArchivo(); Agregar carga -> agregarPieza(); Editar/Eliminar -> editarPieza()/eliminarPieza().
+  Analizador: Analizar mejor opción -> analizar(); Tabla maestra: Restaurar valores base -> restaurarVehiculos().
+  Cotización final: Analizador -> showPanel(5); Generar cotización -> generarCotizacion(); Exportar Excel -> exportarExcel();
+  Imprimir / guardar PDF -> imprimirCotizacion(); Reiniciar todo -> reiniciarTodo().
+-->
+<header class="topbar">
+  <div class="brand"><img src="assets/logitrading-logo.png?v=4" alt="Logitrading" class="brand-logo"><div class="brand-name"><small>ENCUESTADOR DE SELECCIÓN DE VEHÍCULO</small></div></div>
+  <div class="header-actions"><button class="btn ghost" onclick="showPanel(6)">⚙ Tabla maestra</button><button class="btn ghost" onclick="showPanel(8);renderHistory()">Historial</button><button class="btn primary" onclick="showPanel(7);generarCotizacion()">Cotización final</button></div>
+</header>
+
+<main class="container">
+  <div class="hero">
+    <div><div class="eyebrow">Panel de decisión logística</div><h1>Selección inteligente de transporte</h1><p>Registra la operación y una o varias referencias de carga. El sistema convierte unidades, calcula peso, volumen y área de piso, valida dimensiones y condiciones especiales, y recomienda la combinación de vehículos más pequeña que cumpla los requisitos.</p></div>
+  </div>
+  <div class="app-nav app-nav-six" id="appNav" aria-label="Progreso de la solicitud"><button class="app-tab active" data-panel="1" onclick="showPanel(1)"><span class="num">1</span> Servicio</button><button class="app-tab tabhidden" data-panel="3" onclick="showPanel(3)"><span class="num">2</span> Carga</button><button class="app-tab" data-panel="4" onclick="showPanel(4)"><span class="num">3</span> Especiales</button><button class="app-tab" data-panel="5" onclick="showPanel(5)"><span class="num">4</span> Analizador</button><button class="app-tab" data-panel="7" onclick="showPanel(7);generarCotizacion()"><span class="num">5</span> Cotización final</button></div><div class="dashboard"><div class="dash-card"><span>Peso total</span><strong id="dashTon">0.00 t</strong></div><div class="dash-card"><span>Cubicaje</span><strong id="dashM3">0.00 m³</strong></div><div class="dash-card"><span>Referencias</span><strong id="dashRefs">0</strong></div><div class="dash-card"><span>Estado</span><strong><i id="dashDot" class="status-dot"></i><span id="dashStatus">Pendiente</span></strong></div></div>
+
+  <div class="grid">
+    <section class="card panel active" id="panel1">
+      <div class="section-title"><div><h2>1. Información general</h2><div class="sub">Datos necesarios para solicitar la tarifa al transportador. A la derecha se muestra Piezas o Contenedor según la selección.</div></div></div>
+      <div class="fields">
+        <div class="field"><label>Tipo de operación</label><select id="operacion"><option>Importación</option><option>Exportación</option><option>Nacional</option></select></div>
+        <div class="field"><label>Modalidad</label><select id="modalidad"><option>OTM</option><option>Carga nacionalizada</option><option>Continuación de viaje</option><option>Tránsito aduanero</option></select></div>
+        <div class="field"><label>Tipo de servicio</label><select id="servicio"><option>Urbano</option><option>Nacional</option><option>Expreso</option><option>Consolidado</option></select></div>
+        <div class="field"><label>Tipo de carga</label><select id="tipoCarga" onchange="toggleContainer()"><option value="" selected disabled>Seleccione tipo de carga</option><option>Carga suelta</option><option>Contenedor</option><option>Proyecto</option><option>Refrigerada</option></select></div>
+        <div class="field"><label>ID de operación</label><input id="operationId" placeholder="Ej. OP-2026-001"></div>
+        <div class="field"><label>Cliente</label><input id="clientName" placeholder="Nombre de empresa o persona"></div>
+        <div class="field"><label>Origen</label><input id="origen" placeholder="Ciudad / puerto / aeropuerto / zona franca"></div>
+        <div class="field"><label>Destino</label><input id="destino" placeholder="Ciudad y dirección"></div>
+        <div class="field fullw"><label>Dirección de recogida</label><input id="recogida" placeholder="Dirección exacta, muelle o punto de cargue"></div>
+        <div class="field"><label>Fecha requerida</label><input id="fecha" type="datetime-local"></div>
+        <div class="field"><label>Devolución de vacío</label><select id="vacio"><option>No</option><option>Sí</option></select></div>
+        <div class="field"><label>Lugar de devolución</label><input id="lugarVacio" placeholder="Puerto, patio o ciudad"></div>
+      </div>
+
+    </section>
+
+    <section class="card panel" id="panel2">
+      <div class="section-title"><div><h2>2. Contenedor</h2><div class="sub">Se activa cuando la carga viene en contenedor.</div></div></div>
+      <div class="fields">
+        <div class="field"><label>Tamaño</label><select id="contTam"><option>20'</option><option>40'</option><option>40 HC</option></select></div>
+        <div class="field"><label>Tipo</label><select id="contTipo"><option>Dry</option><option>Reefer</option><option>Open Top</option><option>Flat Rack</option><option>Tank</option></select></div>
+        <div class="field"><label>Peso mercancía sin tara (kg) <span class="optional-mark">Si está disponible</span></label><input id="contMerc" type="number" min="0" step="0.01" placeholder="Ej. 18500"></div>
+        <div class="field"><label>Tara contenedor (kg) <span class="optional-mark">Opcional</span></label><input id="contTara" type="number" min="0" step="0.01" placeholder="Si está disponible"></div>
+        <div class="field"><label>N.º contenedores <span class="required-mark">Obligatorio</span></label><input id="contCant" type="number" min="1" value="1"></div>
+        <div class="field"><label>N.º de contenedor</label><input id="contNum" placeholder="Si ya está disponible"></div>
+        <div class="field"><label>Devolución del vacío</label><select id="contVacio"><option>No</option><option>Sí</option></select></div>
+        <div class="field"><label>Patio / ciudad devolución</label><input id="contPatio"></div>
+      </div>
+      <div class="footer-note">Para contenedores, el peso bruto se calcula como mercancía + tara y se valida frente al equipo portacontenedor correspondiente.</div>
+      <div class="panel-next"><span class="footer-note">El número y el patio de devolución pueden completarse después.</span><button class="btn primary" type="button" onclick="continuarServicio()">Continuar →</button></div>
+    </section>
+
+    <div id="panel3Placeholder"></div>
+    <section class="card full panel" id="panel3">
+      <div class="section-title"><div><div class="eyebrow">Carga suelta</div><h2>Información de la carga</h2><div class="sub">Agrega cada referencia o grupo de piezas. Puedes editar cualquier registro antes de continuar.</div></div><div class="section-actions"><button class="btn import-excel" onclick="document.getElementById('excelInput').click()">Importar Excel/CSV</button><input type="file" id="excelInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarArchivo(event)"><button class="btn import-pdf" onclick="document.getElementById('pdfInput').click()">Leer PDF</button><input type="file" id="pdfInput" accept=".pdf" style="display:none" onchange="importarArchivo(event)"><button class="btn primary" onclick="agregarPieza()">+ Agregar carga</button></div></div>
+      <div class="footer-note" id="excelHelp" style="margin-bottom:14px">Busca automáticamente los datos básicos: <b>Largo/Longitud/Length, Ancho/Width, Alto/Altura/Height, Peso/Weight y Cantidad/Unidades/Quantity</b>. Descripción, unidades y campos especiales son opcionales. Las filas incompletas se informan y sus datos encontrados quedan disponibles para completar.</div>
+      <div class="piece" id="pieceForm">
+        <div class="fields">
+          <div class="field"><label>Descripción / referencia</label><input id="pDesc" placeholder="Ej. Pallet producto A"></div>
+          <div class="field"><label>Cantidad</label><input id="pCant" type="number" min="1" value="1"></div>
+          <div class="field"><label>Largo por unidad</label><input id="pL" type="number" min="0" step="0.01" placeholder="Ej. 120"></div>
+          <div class="field"><label>Ancho por unidad</label><input id="pA" type="number" min="0" step="0.01" placeholder="Ej. 100"></div>
+          <div class="field"><label>Alto por unidad</label><input id="pH" type="number" min="0" step="0.01" placeholder="Ej. 150"></div>
+          <div class="field"><label>Unidad de medida</label><select id="pUnidad"><option>Centímetros</option><option>Metros</option></select></div>
+          <div class="field"><label>Peso por unidad</label><input id="pPeso" type="number" min="0" step="0.01" placeholder="Ej. 700"></div>
+          <div class="field"><label>Unidad de peso</label><select id="pPesoUnidad"><option>kg</option><option>toneladas</option></select></div>
+        </div>
+        <div class="piece-extra">
+          <label><input id="pApilable" type="checkbox"> Apilable</label>
+          <label><input id="pAcostarse" type="checkbox"> Puede acostarse</label>
+          <label><input id="pSobresalir" type="checkbox"> Puede sobresalir</label>
+          <label><input id="pFragil" type="checkbox"> Frágil</label>
+          <label><input id="pPeligrosa" type="checkbox"> Peligrosa</label>
+        </div>
+        <div class="footer-note" id="previewPiece">Ingresa medidas y peso para ver el cálculo de esta referencia.</div>
+      </div>
+      <div id="pieceList"></div>
+      <div class="totals">
+        <div class="metric"><span>Peso total</span><strong id="totalTon">0.00 t</strong></div>
+        <div class="metric"><span>Volumen total</span><strong id="totalM3">0.00 m³</strong></div>
+        <div class="metric"><span>Área de piso</span><strong id="totalArea">0.00 m²</strong></div>
+        <div class="metric"><span>Referencias</span><strong id="totalRefs">0</strong></div>
+      </div>
+    </section>
+
+    <div id="servicioContinue" class="service-continue">
+      <button class="btn primary service-continue-btn" id="looseCargoContinue" type="button" onclick="continuarServicio()" disabled>Continuar <span aria-hidden="true">→</span></button>
+    </div>
+
+    <section class="card panel" id="panel4">
+      <div class="section-title"><div><h2>4. Características especiales</h2><div class="sub">Condiciones que pueden cambiar la recomendación.</div></div></div>
+      <div class="fields">
+        <div class="field"><label>¿Requiere carpa o vehículo cerrado?</label><select id="cerrado"><option>No</option><option>Sí</option></select></div>
+        <div class="field"><label>¿Control de temperatura?</label><select id="temp"><option>No</option><option>Sí</option></select></div>
+        <div class="field"><label>Temperatura mínima °C</label><input id="tmin" type="number"></div>
+        <div class="field"><label>Temperatura máxima °C</label><input id="tmax" type="number"></div>
+        <div class="field"><label>¿Alto valor?</label><select id="altoValor"><option>No</option><option>Sí</option></select></div>
+        <div class="field"><label>¿Requiere escolta?</label><select id="escolta"><option>No</option><option>Sí</option></select></div>
+        <div class="field"><label>¿Sello satelital?</label><select id="satelital"><option>No</option><option>Sí</option></select></div>
+        <div class="field"><label>¿Plataforma, montacargas o grúa?</label><select id="equipo"><option>No</option><option>Plataforma</option><option>Montacargas</option><option>Grúa</option></select></div>
+        <div class="field"><label>¿Hay muelle de cargue?</label><select id="muelle"><option>Sí</option><option>No</option></select></div>
+        <div class="field"><label>¿Restricciones de ingreso?</label><select id="restricIngreso"><option>No</option><option>Sí</option></select></div>
+        <div class="field"><label>¿Excede dimensiones normales?</label><select id="sobredim"><option>No</option><option>Sí</option></select></div>
+        <div class="field"><label>¿Restricción de horario?</label><select id="horario"><option>No</option><option>Sí</option></select></div>
+        <div class="field"><label>¿Acompañamiento aduanero?</label><select id="aduana"><option>No</option><option>Sí</option></select></div>
+        <div class="field"><label>¿Mercancía peligrosa?</label><select id="peligrosa"><option>No</option><option>Sí</option></select></div>
+        <div class="field"><label>N.º ONU / Clase IMO</label><input id="imo" placeholder="Ej. UN 1203 / Clase 3"></div>
+      </div>
+    <div class="panel-next"><button class="btn ghost" onclick="showPanel(3)">← Atrás</button><button class="btn primary" onclick="showPanel(5)">Continuar →</button></div></section>
+
+    <section class="card full panel" id="panel5">
+      <div class="section-title"><div><h2>5. Analizador</h2><div class="sub">Margen operativo configurable: 10 % por defecto.</div></div><button class="btn primary" onclick="analizar()">Analizar mejor opción</button></div>
+      <div style="display:grid;grid-template-columns:1.15fr .85fr;gap:16px" class="analyzer-grid">
+        <div>
+          <div id="alerts" class="alerts" role="status" aria-live="polite"><div class="alert blue">Completa al menos una referencia y pulsa <b>Analizar mejor opción</b>.</div></div>
+          <div id="recommendation" style="margin-top:12px"></div>
+        </div>
+        <div>
+          <div class="card" style="padding:14px;background:#0d141e">
+            <h2 style="font-size:14px;margin-bottom:2px">Medidas registradas</h2>
+            <div class="sub" style="margin-bottom:10px">Todas las referencias ingresadas para esta operación.</div>
+            <div style="overflow:auto;max-height:420px">
+              <table class="quote" style="width:100%;border-collapse:collapse"><thead><tr><th>Ref.</th><th>Cant.</th><th>L×A×H (m)</th><th>Peso u. (t)</th><th>Vol. (m³)</th></tr></thead><tbody id="measuresTable"></tbody></table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px;background:#0d141e">
+        <div class="section-title"><div><h2 style="font-size:15px">Valores comerciales</h2><div class="sub">Utilidad, venta y otros conceptos de la cotización.</div></div></div>
+        <div class="fields">
+          <div class="field"><label>Valor de venta (flete al cliente)</label><input id="vVenta" type="number" min="0" step="0.01" placeholder="$" oninput="generarCotizacion()"></div>
+          <div class="field"><label>Costo del transportador</label><input id="vCosto" type="number" min="0" step="0.01" placeholder="$" oninput="generarCotizacion()"></div>
+          <div class="field"><label>Utilidad neta</label><input id="vUtilidad" type="number" step="0.01" placeholder="Calculada o manual" oninput="generarCotizacion()"></div>
+          <div class="field"><label>Sello satelital / seguridad</label><input id="vSello" type="number" min="0" step="0.01" placeholder="$" oninput="generarCotizacion()"></div>
+          <div class="field"><label>Devolución de vacío</label><input id="vDevolucion" type="number" min="0" step="0.01" placeholder="$" oninput="generarCotizacion()"></div>
+          <div class="field"><label>Otros cargos</label><input id="vOtros" type="number" min="0" step="0.01" placeholder="$" oninput="generarCotizacion()"></div>
+          <div class="field fullw"><label>Observaciones comerciales</label><input id="vObs" placeholder="Notas para la cotización final"></div>
+        </div>
+      </div>
+    <div class="panel-next"><button class="btn ghost" onclick="showPanel(4)">← Atrás</button><button class="btn primary" onclick="analizar();showPanel(7);generarCotizacion()">Ver cotización final →</button></div></section>
+
+    <section class="card full panel" id="panel6">
+      <div class="section-title"><div><h2>Tabla maestra de vehículos</h2><div class="sub">Parámetros editables. Los valores iniciales se basan en la tabla de Logitrading enviada por tu jefe. Haz clic en una fila para ver la ficha técnica completa.</div></div><button class="btn" onclick="restaurarVehiculos()">Restaurar valores base</button></div>
+      <div style="overflow:auto"><table class="quote master-table" style="width:100%;border-collapse:collapse"><thead><tr><th>Tipo de vehículo</th><th>Imagen</th><th>Cap. útil (t)</th><th>Volumen (m³)</th><th>L × A × H (m)</th><th>Carrocería</th><th>Uso / carga</th><th>Especial</th></tr></thead><tbody id="vehicleTable"></tbody></table></div>
+    </section>
+
+    <section class="card full panel" id="panel7">
+      <div id="quote" class="quote"><div class="empty">Aún no hay cotización. Registra la carga y analiza la mejor opción.</div></div>
+    <div class="panel-next quote-actions"><button class="btn ghost" onclick="showPanel(5)">← Analizador</button><button class="btn primary" id="quoteGenerateBtn" onclick="generarCotizacion(true)" disabled>Generar cotización</button><button class="btn" onclick="exportarExcel()">Exportar Excel</button><button class="btn" onclick="imprimirCotizacion()">Imprimir / guardar PDF</button><button class="btn danger" onclick="reiniciarTodo()">Reiniciar todo</button></div></section>
+
+    <section class="card full panel" id="panel8">
+      <div class="section-title"><div><div class="eyebrow">Registro local</div><h2>Historial de cotizaciones</h2><div class="sub">Consulta las cotizaciones generadas en este navegador.</div></div><div class="history-actions"><button class="btn" onclick="exportarHistorial()">Exportar historial</button><button class="btn danger" onclick="vaciarHistorial()">Vaciar historial</button></div></div>
+      <div class="history-toolbar"><input id="historySearch" type="search" placeholder="Buscar por ID de operación o cliente" oninput="renderHistory()"><span id="historyCount" class="footer-note">0 registros</span></div>
+      <div class="history-table-wrap"><table class="quote history-table"><thead><tr><th>Fecha</th><th>ID Operación</th><th>Cliente</th><th>Tipo de carga</th><th>Peso</th><th>Volumen</th><th>Vehículo</th><th>Total</th><th></th></tr></thead><tbody id="historyTableBody"></tbody></table></div>
+    </section>
+  </div>
+  <div class="footer-note">Recomendación preliminar: la selección final debe validarse con el transportador según vehículo real, ruta, normatividad, carrocería, estiba/distribución y permisos aplicables.</div>
+</main>
+
+<div id="vehicleModalOverlay" class="modal-overlay" onclick="if(event.target===this)cerrarFicha()">
+  <div class="modal-box" id="vehicleModalBox"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js"></script>
+<!-- v38: mapeo de Cubagem/Quantity y precisión de pesos y volúmenes -->
+<script src="js/app.js?v=38"></script>
