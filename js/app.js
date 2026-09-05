@@ -258,7 +258,7 @@ const PDF_HEADER_DEFINITIONS = [
   { key: "totalGw", aliases: ["total gw (kgs)", "total gw", "total gross weight", "peso bruto total", "gw total", "total weight", "total gross wt", "peso bruto tot", "peso total (t)", "peso total (ton)", "peso total (kg)", "peso total", "peso bruto (kg)", "peso (kg)", "peso (t)", "peso (ton)", "gross weight (kgs)", "gross weight", "gross", "peso bruto", "gw (kgs)", "gw", "peso", "weight"] },
   { key: "weightUnit", aliases: ["unid peso", "unidad peso", "weight unit", "unit weight", "weight uom", "peso uom"] },
   { key: "totalNw", aliases: ["total nw (kgs)", "total nw", "total net weight", "peso neto total", "nw total", "total net wt", "peso neto (kg)", "peso neto (t)", "peso neto", "net weight (kgs)", "net weight", "net", "nw (kgs)", "nw"] },
-  { key: "gwUnit", aliases: ["peso bruto unitario", "peso bruto por caja", "peso unitario", "gw/ctn", "gw/box", "peso x caja", "peso por bulto", "peso unit (kg)", "peso u (t)", "peso/u", "peso unit", "unit gw", "unit gross weight", "unit weight", "gw per ctn", "gw per box"] },
+  { key: "gwUnit", aliases: ["peso bruto unitario", "peso bruto por caja", "peso unitario", "carton weight/carton", "weight/carton", "carton weight", "gw/ctn", "gw/box", "peso x caja", "peso por bulto", "peso unit (kg)", "peso u (t)", "peso/u", "peso unit", "unit gw", "unit gross weight", "unit weight", "gw per ctn", "gw per box"] },
   { key: "nwUnit", aliases: ["peso neto unitario", "peso neto por caja", "nw/ctn", "nw/box", "p. neto unit", "unit nw", "unit net weight"] },
   { key: "pcsPerBox", aliases: ["unidades por caja", "piezas por caja", "pcs/ctn", "pcs/box", "pcs ctn", "pcs box", "pcsctn", "pcsbox", "und/caja"] },
   { key: "qty", aliases: ["quantity (pcs)", "cantidad piezas", "piezas totales", "total pcs", "tot pcs", "unidades", "units", "qty (pcs)", "cantidad", "cant", "qty", "quantity", "und", "pcs", "piezas", "cant.", "pieces"] },
@@ -797,7 +797,7 @@ function pdfTableRecords(items){
   let bestHeaderIndex = -1;
   let detectedColumns = null;
 
-  for(let i = 0; i < Math.min(rows.length - 1, 20); i++){
+  for(let i = 0; i < rows.length - 1; i++){
     const headerSignal=/(?:item|ítem|description|descripcion|reference|referencia|qty|quantity|cant\.?|unid\.?|dimensions|dimensiones|dimension|dim\.?|size|largo|ancho|alto|peso|weight)/i;
     if(!headerSignal.test(rows[i].text))continue;
     const headerRows=[];
@@ -821,6 +821,14 @@ function pdfTableRecords(items){
   detectedColumns.forEach(c => { colMap[c.key] = c; });
 
   const records = [];
+  const firstNumberInCell = value => {
+    const match = String(value||"").match(/[+-]?[0-9][0-9.,]*/);
+    return match ? parseNumber(match[0]) : NaN;
+  };
+  const lastNumberInCell = value => {
+    const matches = String(value||"").match(/[+-]?[0-9][0-9.,]*/g);
+    return matches?.length ? parseNumber(matches[matches.length-1]) : NaN;
+  };
   const startRowIdx = bestHeaderIndex + 1;
   const tableMinX = Math.min(...detectedColumns.map(column => column.minX));
   const tableMaxX = Math.max(...detectedColumns.map(column => column.maxX));
@@ -829,8 +837,28 @@ function pdfTableRecords(items){
   const declaredPackageCount = packageCountMatch ? parseNumber(packageCountMatch[1]) : NaN;
   const summaryFooterPattern = /^(?:(?:\d+\s*[-.]?\s*)?(?:peso bruto|peso liquido|peso neto|peso total|volume?n total|volume?n|quant|cantidad|area de piso|referencias|total))\b/i;
 
+  const firstColumn = detectedColumns[0];
+  const descriptionColumn = detectedColumns.find(column => column.key === "desc") || detectedColumns[1] || firstColumn;
+  const identityBoundary = descriptionColumn.x - 30;
+  const logicalRows = [];
+  let currentRow = null;
   for(let r = startRowIdx; r < rows.length; r++){
-    const row = rows[r];
+    const sourceRow = rows[r];
+    const normalizedSource = normalizePdfText(sourceRow.text);
+    const isSummaryRow = /^(?:(?:\d+\s*)?(?:carton|cartons|ctn|ctns)\b.*\b(?:kg|kgs)\b|(?:issued by|emitido por)\b)/i.test(normalizedSource);
+    if(isSummaryRow)continue;
+    const startsRecord = sourceRow.items.some(item => item.x >= firstColumn.minX && item.x < identityBoundary && /\S/.test(stripPageMarkers(item.text)));
+    if(startsRecord){
+      currentRow = {y:sourceRow.y,text:sourceRow.text,items:[...sourceRow.items]};
+      logicalRows.push(currentRow);
+    }else if(currentRow){
+      currentRow.text += ` ${sourceRow.text}`;
+      currentRow.items.push(...sourceRow.items);
+    }
+  }
+
+  for(let r = 0; r < logicalRows.length; r++){
+    const row = logicalRows[r];
     const normalized = normalizePdfText(row.text);
 
     if(summaryFooterPattern.test(normalized)) continue;
@@ -851,9 +879,18 @@ function pdfTableRecords(items){
     const codeText = extractCellFromRow(row, colMap.code);
     const description = [refText, descText].filter(Boolean).join(" - ") || descText || refText || codeText || `Ítem ${records.length + 1}`;
 
-    const qtyVal = parseNumber(extractCellFromRow(row, colMap.qty));
-    const rawBoxVal = parseNumber(extractCellFromRow(row, colMap.boxes));
-    const boxVal = sanitizePdfPackageCount(rawBoxVal, Number.isFinite(declaredPackageCount) ? declaredPackageCount : qtyVal);
+    const qtyVal = firstNumberInCell(extractCellFromRow(row, colMap.qty));
+    const rawBoxVal = firstNumberInCell(extractCellFromRow(row, colMap.boxes));
+    const rowPackageMatch = /(?:^|\s)([0-9][0-9.,]*)\s*(?:carton|cartons|ctn|ctns|caja|cajas|bulto|bultos)\b/i.exec(row.text);
+    const explicitPackageCount = rowPackageMatch ? parseNumber(rowPackageMatch[1]) : NaN;
+    const hasRowWeight = /\b(?:kg|kgs|lb|lbs|ton|tons|t)\b/i.test(row.text);
+    const fallbackPackageCount = Number.isFinite(declaredPackageCount) ? declaredPackageCount : qtyVal;
+    const packageFallback = !Number.isFinite(rawBoxVal) && !Number.isFinite(explicitPackageCount) && !hasRowWeight && !colMap.boxes ? 0 : fallbackPackageCount;
+    const boxVal = Number.isFinite(rawBoxVal)
+      ? sanitizePdfPackageCount(rawBoxVal, packageFallback)
+      : Number.isFinite(explicitPackageCount)
+        ? sanitizePdfPackageCount(explicitPackageCount, packageFallback)
+        : packageFallback === 0 ? 0 : sanitizePdfPackageCount(NaN, packageFallback);
     const suspiciousBoxId=Number.isFinite(rawBoxVal)&&(rawBoxVal>9999 || rawBoxVal>=1000&&!Number.isFinite(qtyVal));
     const quantity = suspiciousBoxId ? 1 : Number.isFinite(qtyVal) && qtyVal > 0 ? qtyVal : boxVal;
     const boxes = boxVal;
@@ -863,9 +900,10 @@ function pdfTableRecords(items){
     if(sizeStr){
       const parsedDim = findPdfDimensions(sizeStr);
       if(parsedDim){
-        L = convertPdfMeasurement({ value: parsedDim.L, unit: parsedDim.unit }, "cm");
-        W = convertPdfMeasurement({ value: parsedDim.W, unit: parsedDim.unit }, "cm");
-        H = convertPdfMeasurement({ value: parsedDim.H, unit: parsedDim.unit }, "cm");
+        const sizeUnit = colMap.size?.unit || parsedDim.unit || "cm";
+        L = convertPdfMeasurement({ value: parsedDim.L, unit: sizeUnit }, "cm");
+        W = convertPdfMeasurement({ value: parsedDim.W, unit: sizeUnit }, "cm");
+        H = convertPdfMeasurement({ value: parsedDim.H, unit: sizeUnit }, "cm");
       }
     }
 
@@ -887,10 +925,10 @@ function pdfTableRecords(items){
       }
     }
 
-    const gwTotVal = parseNumber(extractCellFromRow(row, colMap.totalGw));
-    const nwTotVal = parseNumber(extractCellFromRow(row, colMap.totalNw));
-    const gwUnitVal = parseNumber(extractCellFromRow(row, colMap.gwUnit));
-    const nwUnitVal = parseNumber(extractCellFromRow(row, colMap.nwUnit));
+    const gwTotVal = lastNumberInCell(extractCellFromRow(row, colMap.totalGw));
+    const nwTotVal = lastNumberInCell(extractCellFromRow(row, colMap.totalNw));
+    const gwUnitVal = firstNumberInCell(extractCellFromRow(row, colMap.gwUnit));
+    const nwUnitVal = firstNumberInCell(extractCellFromRow(row, colMap.nwUnit));
 
     const rowWeightUnit=(extractCellFromRow(row,colMap.weightUnit).match(/kg|kgs|lb|lbs|g|ton(?:eladas?)?|t/i)||[])[0]||"";
     const unitGW = colMap.totalGw?.unit || colMap.gwUnit?.unit || rowWeightUnit || "kg";
@@ -929,8 +967,6 @@ function pdfTableRecords(items){
     const secondaryRow=/^pallet\b|tipo de embalagem|nuestra ref|su ref|peso liquido un|peso bruto un|^cantidad$|^dimensiones$/i.test(normalized);
     if(!hasIdentity&&!hasLoadData)continue;
     if(secondaryRow&&!Number.isFinite(grossKg)&&!Number.isFinite(cbmVal))continue;
-    if(colMap.size&&!hasDimensions)continue;
-
     records.push({
       desc: description,
       q: quantity,
@@ -963,6 +999,12 @@ function pdfTableRecords(items){
     gross: findTot(["peso bruto total", "total gw", "peso bruto", "peso total"]),
     volume: findTot(["volumen total", "volume total", "total cbm", "total m3", "cubaje"])
   };
+  const cartonSummaries = [...documentText.matchAll(/(?:^|\s)([0-9][0-9.,]*)\s+cartons?\s+([0-9][0-9.,]*)\s*(?:kg|kgs)\b/gi)];
+  const cartonSummary = cartonSummaries.at(-1);
+  if(cartonSummary){
+    totals.boxes=parseNumber(cartonSummary[1]);
+    totals.gross=parseNumber(cartonSummary[2]);
+  }
 
   return { records, totals };
 }
