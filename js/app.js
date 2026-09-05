@@ -64,6 +64,8 @@ let pieces = [];
 let lastAnalysis = null;
 let editingIndex = null;
 let pdfTotalsOverride = null;
+// The URL is public configuration; the provider secret stays in the Worker.
+const AI_EXTRACTION_WORKER_URL = window.LOGITRADING_AI_WORKER_URL || "";
 
 function $(id){return document.getElementById(id)}
 function num(id){return parseFloat($(id).value)||0}
@@ -397,7 +399,8 @@ function extractedReferencesToPieces(result){
   return (result?.referencias||[]).map(reference=>{
     const hasValue=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
     const quantity=Number(reference.cantidad)>0?Number(reference.cantidad):1;
-    const weightKg=hasValue(reference.peso_kg)?Number(reference.peso_kg):null;
+    const grossKg=hasValue(reference.peso_bruto_kg)?Number(reference.peso_bruto_kg):hasValue(reference.peso_kg)?Number(reference.peso_kg):null;
+    const netKg=hasValue(reference.peso_neto_kg)?Number(reference.peso_neto_kg):grossKg;
     return {
       desc:reference.descripcion||reference.referencia||"Referencia importada",
       ref:reference.referencia,
@@ -411,14 +414,46 @@ function extractedReferencesToPieces(result){
           ? Number(reference.largo_cm)*Number(reference.ancho_cm)*Number(reference.alto_cm)/1000000*quantity
           : null
       ),
-      wt:weightKg===null?null:weightKg/1000,
-      gw:weightKg===null?null:weightKg/1000,
-      nw:weightKg===null?null:weightKg/1000,
+          wt:grossKg===null?null:grossKg/1000,
+          gw:grossKg===null?null:grossKg/1000,
+          nw:netKg===null?null:netKg/1000,
       incomplete:Boolean(reference.incompleta),
       extractionWarnings:Array.isArray(reference.advertencias)?reference.advertencias:[],
       apilable:true,acostarse:false,sobresalir:false,fragil:false,peligrosa:false
     };
   });
+}
+
+function summarizePdfRecords(records){
+  return records.reduce((totals,record)=>{
+    totals.quantity+=Number(record.q)||0;
+    totals.boxes+=Number(record.boxes)||0;
+    totals.net+=(Number(record.nw)||0)*(Number(record.q)||0);
+    totals.weight+=(Number(record.gw??record.wt)||0)*(Number(record.q)||0);
+    totals.volume+=Number(record.volume)||0;
+    return totals;
+  },{quantity:0,boxes:0,net:0,weight:0,volume:0});
+}
+
+function hasSeverePdfMismatch(mismatches){
+  return mismatches.some(item=>Math.abs(item.calculated-item.documentValue)>Math.max(Math.abs(item.documentValue),0.001));
+}
+
+function shouldUseAiFallback(records, mismatches){
+  return !records.length || records.some(record=>record.incomplete) || hasSeverePdfMismatch(mismatches);
+}
+
+async function requestAiPdfExtraction(sourceText,fileName){
+  if(!AI_EXTRACTION_WORKER_URL)return null;
+  const response=await fetch(AI_EXTRACTION_WORKER_URL,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({filename:fileName,text:String(sourceText||"").slice(0,180000)})
+  });
+  if(!response.ok)throw new Error(`Worker IA respondió ${response.status}`);
+  const result=await response.json();
+  if(!result||!Array.isArray(result.referencias))throw new Error("El Worker IA devolvió un formato inválido");
+  return result;
 }
 function extractPackingListText(input){
   const source=String(input??"");
@@ -1222,6 +1257,37 @@ async function importarPDF(file){
   }
  }
 
+ const declaredTotals={...(table.totals||{}),...pdfSummaryTotals(items)};
+ let importedTotals=summarizePdfRecords(records);
+ let mismatches=comparePdfTotals(declaredTotals,importedTotals);
+ let usedAiFallback=false;
+ let fallbackMessage="";
+
+ if(shouldUseAiFallback(records,mismatches)){
+  if(AI_EXTRACTION_WORKER_URL){
+   try{
+    $("excelHelp").textContent="El parser local no alcanzó suficiente confianza. Consultando el extractor IA...";
+    const aiResult=await requestAiPdfExtraction(lines.join("\n"),file.name);
+    const aiRecords=extractedReferencesToPieces(aiResult);
+    if(aiRecords.length){
+     records=aiRecords;
+     usedAiFallback=true;
+     const aiTotals=aiResult.totales_documento||{};
+     ["quantity","boxes","net","gross","volume"].forEach(key=>{
+      if(!Number.isFinite(declaredTotals[key])&&Number.isFinite(Number(aiTotals[key])))declaredTotals[key]=Number(aiTotals[key]);
+     });
+     importedTotals=summarizePdfRecords(records);
+     mismatches=comparePdfTotals(declaredTotals,importedTotals);
+    }
+   }catch(error){
+    fallbackMessage=` El respaldo IA no estuvo disponible: ${error.message}.`;
+    console.warn("[PDF IA] fallback failed",error);
+   }
+  }else{
+   fallbackMessage=" Configura la URL del Worker para activar el respaldo IA.";
+  }
+ }
+
  let importadas=0;
  if(records.length){
   pieces=[];
@@ -1234,18 +1300,7 @@ async function importarPDF(file){
  renderPieces();
  updateDashboard();
 
- const declaredTotals={...(table.totals||{}),...pdfSummaryTotals(items)};
- const importedTotals=records.reduce((a,record)=>{
-   a.quantity+=Number(record.q)||0;
-   a.boxes+=Number(record.boxes)||0;
-   a.net+=(Number(record.nw)||0)*(Number(record.q)||0);
-   a.weight+=(Number(record.gw??record.wt)||0)*(Number(record.q)||0);
-   a.volume+=Number(record.volume)||0;
-   return a;
- },{quantity:0,boxes:0,net:0,weight:0,volume:0});
-
- const mismatches=comparePdfTotals(declaredTotals,importedTotals);
- const severeMismatch=mismatches.some(item=>Math.abs(item.calculated-item.documentValue)>Math.max(Math.abs(item.documentValue),0.001));
+ const severeMismatch=hasSeverePdfMismatch(mismatches);
   if(Number.isFinite(declaredTotals.volume)&&Math.abs(importedTotals.volume-declaredTotals.volume)<=0.01){
     pdfTotalsOverride={...(pdfTotalsOverride||{}),volume:declaredTotals.volume};
   }
@@ -1278,7 +1333,7 @@ async function importarPDF(file){
     alert(`Alerta: los datos calculados no coinciden con los totales del PDF (${mismatches.map(item=>`${item.name}: ${item.difference>0?"+":""}${item.difference.toFixed(2)}`).join(", ")}). ${severeMismatch?"Se mostrará el total declarado por el documento.":"Se conservaron los datos individuales extraídos."}`);
   }
   const shownTotals=totals();
-  const statusMsg = `PDF "${file.name}" procesado: ${importadas} ref(s) | ${Number.isFinite(declaredTotals.boxes)?declaredTotals.boxes:shownTotals.boxes} cajas | ${(shownTotals.weight).toFixed(5)} t (${(shownTotals.weight*1000).toFixed(2)} kg) | ${shownTotals.volume.toFixed(3)} m³${severeMismatch?" | tomado del total declarado en el documento":""}`;
+  const statusMsg = `PDF "${file.name}" procesado: ${importadas} ref(s) | ${Number.isFinite(declaredTotals.boxes)?declaredTotals.boxes:shownTotals.boxes} cajas | ${(shownTotals.weight).toFixed(5)} t (${(shownTotals.weight*1000).toFixed(2)} kg) | ${shownTotals.volume.toFixed(3)} m³${usedAiFallback?" | respaldo IA":""}${severeMismatch?" | tomado del total declarado en el documento":""}${fallbackMessage}`;
   $("excelHelp").textContent = statusMsg;
   alert(statusMsg);
  } else {
