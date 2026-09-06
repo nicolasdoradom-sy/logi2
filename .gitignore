@@ -1,0 +1,6 @@
+# PDFs de clientes: se usan localmente para regresión, nunca en el repositorio público.
+/*.[Pp][Dd][Ff]
+/tests/fixtures/packing-lists/*.[Pp][Dd][Ff]
+
+# Dependencias instaladas localmente.
+/node_modules/

@@ -1,6 +1,6 @@
 {
   "file": "PACKING_AFM9667.pdf",
-  "fixture_type": "synthetic",
+  "fixture_type": "real-local",
   "description": "Fixture sintético confidencial: formato jerárquico con pallets y tres referencias físicas.",
   "peso_bruto_kg": 960.0,
   "volumen_m3": 5.4,

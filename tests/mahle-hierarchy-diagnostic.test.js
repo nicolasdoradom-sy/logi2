@@ -16,7 +16,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = require.resolve("pdfjs-dist/legacy/buil
 vm.runInNewContext(`${source}\nthis.runImport = importarPDF;`, context);
 
 (async () => {
-  const fileName = "LIM0609E26_-_PL.PDF";
+  const fileName = process.argv[2] || "LIM0609E26_-_PL.PDF";
   const data = new Uint8Array(fs.readFileSync(path.join(__dirname, "fixtures", "packing-lists", fileName)));
   await context.runImport({ name: fileName, arrayBuffer: async () => data.buffer });
 })().catch(error => {

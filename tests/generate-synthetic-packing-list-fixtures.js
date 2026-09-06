@@ -74,8 +74,5 @@ function hierarchicalFixture(fileName, groupCount, totalWeight, totalVolume, tot
   createPdf(fileName, [lines]);
 }
 
-flatFixture("PL_2026RL338.pdf", 82, 3299.8, 5.42, 37.05, true);
-hierarchicalFixture("PACKING_AFM9667.pdf", 3, 960, 5.4, 3.6, "PALLET");
-hierarchicalFixture("02_Packing_List_DN3047.pdf", 242, 12682, 94.1, 76.24, "CAIXA");
 flatFixture("PACKING_LIST_TEST_001.pdf", 5, 90.45, 0.419, 2.455, false);
 flatFixture("PACKING_LIST_TEST_002_COMPLEJA.pdf", 10, 288.1, 0.795, 4.978, true);

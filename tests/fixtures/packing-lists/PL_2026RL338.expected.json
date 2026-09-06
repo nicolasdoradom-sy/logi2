@@ -1,6 +1,6 @@
 {
   "file": "PL_2026RL338.pdf",
-  "fixture_type": "synthetic",
+  "fixture_type": "real-local",
   "description": "Fixture sintético confidencial: formato plano, 82 renglones, decimales con coma y encabezado partido en dos líneas.",
   "peso_bruto_kg": 3299.8,
   "volumen_m3": 5.42,

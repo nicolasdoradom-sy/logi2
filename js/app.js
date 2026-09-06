@@ -236,6 +236,7 @@ function totals(){
   return {weight,gw:weight,net:num("contMerc")*count/1000,volume:0,area:0,refs:count,maxL:0,maxW:0,maxH:0};
  }
   const seenGroups=new Set();
+  const seenGroupAreas=new Set();
   const calculated=pieces.reduce((a,p)=>{
    const quantity=Number.isFinite(Number(p.q))?Number(p.q):0;
    const boxes=Number.isFinite(Number(p.boxes))?Number(p.boxes):quantity;
@@ -263,7 +264,13 @@ function totals(){
        : 0
     );
    }
-   if(Number.isFinite(Number(p.L))&&Number.isFinite(Number(p.W)))a.area+=Number(p.L)*Number(p.W)*boxes;
+   if(Number.isFinite(Number(p.L))&&Number.isFinite(Number(p.W))){
+    if(!p.groupId)a.area+=Number(p.L)*Number(p.W)*boxes;
+    else if(!seenGroupAreas.has(p.groupId)){
+      seenGroupAreas.add(p.groupId);
+      a.area+=Number(p.L)*Number(p.W);
+    }
+   }
    if(Number.isFinite(Number(p.L)))a.maxL=Math.max(a.maxL,Number(p.L));
    if(Number.isFinite(Number(p.W)))a.maxW=Math.max(a.maxW,Number(p.W));
    if(Number.isFinite(Number(p.H)))a.maxH=Math.max(a.maxH,Number(p.H));
@@ -309,6 +316,7 @@ function parseNumber(value, options={}){
  if(!numeric)return NaN;
  const kind=String(options.kind||options.type||"generic").toLowerCase();
  const isIntegerContext=/^(quantity|qty|boxes|box|integer|count|pieces|pcs)$/i.test(kind);
+ const isTotalWeightContext=/^(totalweight|total_weight)$/i.test(kind);
  const isDecimalContext=/^(weight|volume|dimension|length|width|height|money|decimal)$/i.test(kind);
  const separators=numeric.match(/[.,]/g)||[];
  let normalized=numeric;
@@ -321,7 +329,7 @@ function parseNumber(value, options={}){
    else normalized=numeric.slice(0,decimalIndex).replace(/[.,]/g,"")+"."+fractional;
  }else if(separators.length===1){
    const separator=separators[0], index=numeric.indexOf(separator), fractional=numeric.slice(index+1);
-   if(fractional.length===3&&isIntegerContext)normalized=numeric.replace(separator,"");
+  if(fractional.length===3&&(isIntegerContext||isTotalWeightContext))normalized=numeric.replace(separator,"");
   else if(fractional.length>=1&&(fractional.length<=4||(isDecimalContext&&fractional.length<=6)))normalized=numeric.replace(separator,".");
    else normalized=numeric.replace(separator,"");
  }else if(!/^[-+]?\d+$/.test(numeric))return NaN;
@@ -959,6 +967,7 @@ function pdfPalletPackingRecords(items){
   };
   const productCode=/^(?=[A-Z0-9-]*\d)[A-Z0-9]+(?:-[A-Z0-9]+)+$/i;
   const groups=[];
+  const looseBoxGroups=[];
   const records=[];
   const seenItems=new Set();
 
@@ -968,12 +977,25 @@ function pdfPalletPackingRecords(items){
     if(/\b(?:pallet|palet)\b/i.test(row.text)){
       const nearby=rows.filter(candidate=>Math.abs(candidate.y-row.y)<=layout.rowGap*3).map(candidate=>candidate.text).join(" ");
       const boxesMatch=/\b(?:cajas?|boxes?|cartons?)\s*:\s*([0-9][0-9.,]*)/i.exec(nearby);
-      if(!boxesMatch)continue;
+      if(!boxesMatch){
+        console.log("[pdfPalletPackingRecords] skipped pallet",{row:row.text,nearby});
+        continue;
+      }
       const dimensions={L:NaN,W:NaN,H:NaN};
       dimensions.L=parseNumber(/(?:large|length|largo)\s*:\s*([0-9][0-9.,]*)/i.exec(nearby)?.[1],{kind:"dimension"});
       dimensions.W=parseNumber(/(?:width|ancho)\s*:\s*([0-9][0-9.,]*)/i.exec(nearby)?.[1],{kind:"dimension"});
       dimensions.H=parseNumber(/(?:height|alto)\s*:\s*([0-9][0-9.,]*)/i.exec(nearby)?.[1],{kind:"dimension"});
       groups.push({id:`pallet-${groups.length+1}`,y:row.y,boxes:parseNumber(boxesMatch?.[1],{kind:"boxes"}),...dimensions,firstRecord:null});
+    }
+    if(/\bbox\b/i.test(row.text)){
+      const nearby=rows.filter(candidate=>Math.abs(candidate.y-row.y)<=layout.rowGap*3).map(candidate=>candidate.text).join(" ");
+      const boxesMatch=/\b(?:cajas?|boxes?|cartons?)\s*:\s*([0-9][0-9.,]*)/i.exec(nearby);
+      if(!boxesMatch)continue;
+      const dimensions={L:NaN,W:NaN,H:NaN};
+      dimensions.L=parseNumber(/(?:large|length|largo)\s*:\s*([0-9][0-9.,]*)/i.exec(nearby)?.[1],{kind:"dimension"});
+      dimensions.W=parseNumber(/(?:width|ancho)\s*:\s*([0-9][0-9.,]*)/i.exec(nearby)?.[1],{kind:"dimension"});
+      dimensions.H=parseNumber(/(?:height|alto)\s*:\s*([0-9][0-9.,]*)/i.exec(nearby)?.[1],{kind:"dimension"});
+      looseBoxGroups.push({id:`box-${looseBoxGroups.length+1}`,y:row.y,...dimensions});
     }
   }
   const subtotalRows=rows.filter(row=>/^sub\s*totals?\s*:/i.test(row.text)).sort((a,b)=>b.y-a.y);
@@ -1018,13 +1040,33 @@ function pdfPalletPackingRecords(items){
     records.push(record);
   }
   if(!records.length||!groups.some(candidate=>candidate.firstRecord))return null;
-  console.log("[pdfPalletPackingRecords] children",groups.map(group=>({group:group.id,references:records.filter(record=>record.groupId===group.id).length})));
+  const groupDiagnostics=[...groups,...looseBoxGroups].map(group=>{
+    const groupRecords=records.filter(record=>record.groupId===group.id);
+    return {
+      group:group.id,
+      references:groupRecords.length,
+      grossKg:group.grossKg,
+      netVolume:groupRecords.reduce((sum,record)=>sum+(Number.isFinite(record.volume)?record.volume:0),0),
+      L:group.L,W:group.W,
+      area:Number.isFinite(group.L)&&Number.isFinite(group.W)?group.L*group.W/10000:null
+    };
+  });
+  const physicalArea=groupDiagnostics.reduce((sum,group)=>sum+(Number.isFinite(group.area)?group.area:0),0);
+  console.log("[pdfPalletPackingRecords] groups",{
+    groups:groupDiagnostics,
+    grossKg:groupDiagnostics.reduce((sum,group)=>sum+(Number.isFinite(group.grossKg)?group.grossKg:0),0),
+    netVolume:groupDiagnostics.reduce((sum,group)=>sum+group.netVolume,0),
+    area:physicalArea
+  });
   const totalRow=rows.find(row=>/^totals?\s*:/i.test(row.text));
+  const grossVolumeX=findHeaderX(/^g\.?\s*vol\.?$/i);
   const totalAt=(x,kind)=>totalRow?numberAt(totalRow,x,kind):NaN;
+  const totalGrossVolume=totalAt(grossVolumeX,"volume");
   return {records,totals:{
     quantity:totalAt(qtyX,"quantity"), boxes:groups.reduce((sum,candidate)=>sum+(Number.isFinite(candidate.boxes)?candidate.boxes:0),0),
-    net:totalAt(netWeightX,"weight"), gross:totalAt(grossWeightX,"weight"), volume:totalAt(netVolumeX,"volume"),
-    grossVolume:totalAt(findHeaderX(/^g\.?\s*vol\.?$/i),"volume")
+    net:totalAt(netWeightX,"weight"), gross:totalAt(grossWeightX,"totalWeight"), volume:Number.isFinite(totalGrossVolume)?totalGrossVolume:totalAt(netVolumeX,"volume"),
+    grossVolume:totalGrossVolume,
+    area:physicalArea
   },hierarchical:true};
 }
 
@@ -1040,9 +1082,10 @@ function pdfTableRecords(items){
 
   let bestHeaderIndex = -1;
   let detectedColumns = null;
+  let bestHeaderScore = -Infinity;
 
   for(let i = 0; i < rows.length - 1; i++){
-    const headerSignal=/(?:item|ítem|description|descripcion|reference|referencia|qty|quantity|cant\.?|unid\.?|dimensions|dimensiones|dimension|dim\.?|size|largo|ancho|alto|peso|weight)/i;
+    const headerSignal=/(?:item|ítem|description|descripcion|reference|referencia|qty|quantity|cant\.?|unid\.?|dimensions|dimensiones|dimension|dim\.?|size|largo|ancho|alto|peso|weight|n\.?w\.?|g\.?w\.?|net|gross)/i;
     if(!headerSignal.test(rows[i].text))continue;
     const headerRows=[];
     for(let next=Math.max(0,i-2);next<Math.min(rows.length,i+3);next++){
@@ -1051,9 +1094,13 @@ function pdfTableRecords(items){
     const cols=detectPdfTableColumns(headerRows);
 
     if(cols){
-      bestHeaderIndex = i;
-      detectedColumns = cols;
-      break;
+      const keys=new Set(cols.map(column=>column.key));
+      const score=cols.length+(keys.has("totalGw")?4:0)+(keys.has("totalNw")?4:0)+(keys.has("qty")?2:0)+(keys.has("desc")?2:0);
+      if(score>bestHeaderScore){
+        bestHeaderIndex = i;
+        detectedColumns = cols;
+        bestHeaderScore = score;
+      }
     }
   }
 
@@ -1122,6 +1169,8 @@ function pdfTableRecords(items){
 
     if(extractTotalRow(row)) continue;
     if(summaryFooterPattern.test(normalized)||packingSummaryFooterPattern.test(normalized)) continue;
+    if(/^pallet\s+exportacao\b/i.test(normalized)) continue;
+    if(/^[\d\s.,*-]+$/.test(normalized)) continue;
     if(/^(?:cantidad total|peso neto|peso bruto|volume total|volumen total)\b/i.test(normalized)) continue;
     if(detectPdfTableColumns([row])) continue;
     if(!/\d/.test(row.text)) continue;
@@ -1629,7 +1678,12 @@ async function importarPDF(file){
  updateDashboard();
 
  const severeMismatch=hasSeverePdfMismatch(mismatches);
- pdfTotalsOverride=null;
+ pdfTotalsOverride=severeMismatch&&table.hierarchical?{
+  ...(Number.isFinite(declaredTotals.gross)?{weight:declaredTotals.gross/1000,gw:declaredTotals.gross/1000}:{}),
+  ...(Number.isFinite(declaredTotals.net)?{net:declaredTotals.net/1000}:{}),
+  ...(Number.isFinite(declaredTotals.volume)?{volume:declaredTotals.volume}:{}),
+  ...(Number.isFinite(table.totals?.area)?{area:table.totals.area}:{})
+ }:null;
  pdfImportMeta={
   incompleteRows: importedTotals.incompleteRows||records.filter(record=>record.incomplete).length,
   excludedRows: importedTotals.excludedRows||0,

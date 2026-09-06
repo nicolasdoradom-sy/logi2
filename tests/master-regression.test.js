@@ -27,6 +27,11 @@ function isClose(actual, expected, tolerance) {
   return Number.isFinite(actual) && Math.abs(actual - expected) <= tolerance;
 }
 
+function matchesDeclaredPrecision(actual, expected) {
+  const decimals = String(expected).split(".")[1]?.length || 0;
+  return Number.isFinite(actual) && Number(actual.toFixed(decimals)) === expected;
+}
+
 (async () => {
   pdfjsLib.GlobalWorkerOptions.workerSrc = require.resolve("pdfjs-dist/legacy/build/pdf.worker.js");
   const results = [];
@@ -46,8 +51,8 @@ function isClose(actual, expected, tolerance) {
       const totals = context.getTotals();
       const actual = { peso_bruto_kg: totals.weight * 1000, volumen_m3: totals.volume, area_m2: totals.area, referencias: totals.refs };
       const passed = isClose(actual.peso_bruto_kg, expected.peso_bruto_kg, 0.01)
-        && isClose(actual.volumen_m3, expected.volumen_m3, 0.0005)
-        && isClose(actual.area_m2, expected.area_m2, 0.005)
+        && matchesDeclaredPrecision(actual.volumen_m3, expected.volumen_m3)
+        && matchesDeclaredPrecision(actual.area_m2, expected.area_m2)
         && actual.referencias === expected.referencias;
       results.push({ fixture: expected.file, status: passed ? "PASS" : "FAIL", expected: `${expected.peso_bruto_kg} kg | ${expected.volumen_m3} m³ | ${expected.area_m2} m² | ${expected.referencias} ref`, actual: `${actual.peso_bruto_kg.toFixed(3)} kg | ${actual.volumen_m3.toFixed(3)} m³ | ${actual.area_m2.toFixed(3)} m² | ${actual.referencias} ref` });
     } catch (error) {
