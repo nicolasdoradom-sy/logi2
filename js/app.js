@@ -35,7 +35,7 @@ function showPanel(n){
   updateDashboard();
   window.scrollTo({top:0,behavior:'smooth'});
 }
-function updateDashboard(){const t=typeof totals==='function'?totals():{weight:0,volume:0,refs:0};const a=typeof lastAnalysis!=='undefined'?lastAnalysis:null;const q=id=>document.getElementById(id);if(q('dashTon'))q('dashTon').textContent=(t.weight||0).toFixed(5)+' t';if(q('dashM3'))q('dashM3').textContent=(t.volume||0).toFixed(3)+' m³';if(q('dashRefs'))q('dashRefs').textContent=t.refs||0;updateQuoteButton();if(a&&typeof validation==='function'){const v=validation(a);q('dashStatus').textContent=v.level==='green'?'Aprobado':v.level==='yellow'?'Revisar':'No compatible';q('dashDot').className='status-dot '+v.level;}else{q('dashStatus').textContent='Pendiente';q('dashDot').className='status-dot';}}
+function updateDashboard(){const t=typeof totals==='function'?totals():{weight:0,volume:0,refs:0};const a=typeof lastAnalysis!=='undefined'?lastAnalysis:null;const q=id=>document.getElementById(id);if(q('dashTon'))q('dashTon').textContent=(t.weight||0).toFixed(5)+' t';if(q('dashM3'))q('dashM3').textContent=(t.volume||0).toFixed(3)+' m³';if(q('dashRefs'))q('dashRefs').textContent=t.refs||0;updateQuoteButton();if(a&&typeof validation==='function'){const v=validation(a);q('dashStatus').textContent=v.level==='green'?'Aprobado':v.level==='yellow'?'Revisar':'No compatible';q('dashDot').className='status-dot '+v.level;}else if(pdfImportMeta.validation?.status==='review'){q('dashStatus').textContent='Revisar';q('dashDot').className='status-dot yellow';}else if(pdfImportMeta.incompleteRows||pdfImportMeta.excludedRows){q('dashStatus').textContent=`Parcial (${pdfImportMeta.excludedRows||pdfImportMeta.incompleteRows} filas excluidas)`;q('dashDot').className='status-dot yellow';}else{q('dashStatus').textContent='Pendiente';q('dashDot').className='status-dot';}}
 function updateQuoteButton(){const button=$("quoteGenerateBtn");if(!button)return;const enabled=typeof hasCargo==='function'&&hasCargo();button.disabled=!enabled;button.setAttribute("aria-disabled",String(!enabled));}
 
 const BASE_VEHICLES = [
@@ -64,6 +64,7 @@ let pieces = [];
 let lastAnalysis = null;
 let editingIndex = null;
 let pdfTotalsOverride = null;
+let pdfImportMeta = { incompleteRows: 0, excludedRows: 0, validation: null };
 // The URL is public configuration; the provider secret stays in the Worker.
 const AI_EXTRACTION_WORKER_URL = window.LOGITRADING_AI_WORKER_URL || "";
 
@@ -232,25 +233,38 @@ function totals(){
   const weight=(num("contMerc")+num("contTara"))*count/1000;
   return {weight,gw:weight,net:num("contMerc")*count/1000,volume:0,area:0,refs:count,maxL:0,maxW:0,maxH:0};
  }
+  const seenGroups=new Set();
   const calculated=pieces.reduce((a,p)=>{
-   const quantity=Number(p.q)||0;
-  const boxes=Number.isFinite(Number(p.boxes))?Number(p.boxes):quantity;
-   const gross=Number(p.gw??p.wt)||0;
-   const net=Number(p.nw??p.wt)||0;
-   a.weight+=gross*quantity;
-   a.gw+=gross*quantity;
-   a.net+=net*quantity;
-   a.volume+=Number.isFinite(Number(p.volume))?Number(p.volume):(
+   const quantity=Number.isFinite(Number(p.q))?Number(p.q):0;
+   const boxes=Number.isFinite(Number(p.boxes))?Number(p.boxes):quantity;
+   const gross=Number.isFinite(Number(p.gw??p.wt))?Number(p.gw??p.wt):0;
+   const net=Number.isFinite(Number(p.nw??p.wt))?Number(p.nw??p.wt):0;
+  if(p.incomplete)a.incompleteRows++;
+  if(!Number.isFinite(Number(p.q))||!Number.isFinite(Number(p.gw??p.wt))||!Number.isFinite(Number(p.nw??p.wt))||!Number.isFinite(Number(p.volume))&&!Number.isFinite(Number(p.L)*Number(p.W)*Number(p.H)))a.excludedRows++;
+   if(p.groupId&&!seenGroups.has(p.groupId)){
+    seenGroups.add(p.groupId);
+    a.weight+=Number.isFinite(Number(p.groupGrossT))?Number(p.groupGrossT):gross*quantity;
+    a.gw+=Number.isFinite(Number(p.groupGrossT))?Number(p.groupGrossT):gross*quantity;
+    a.net+=Number.isFinite(Number(p.groupNetT))?Number(p.groupNetT):net*quantity;
+    a.volume+=Number.isFinite(Number(p.groupVolume))?Number(p.groupVolume):(
+      Number.isFinite(Number(p.volume))?Number(p.volume):0
+    );
+   }else if(!p.groupId){
+    a.weight+=gross*quantity;
+    a.gw+=gross*quantity;
+    a.net+=net*quantity;
+    a.volume+=Number.isFinite(Number(p.volume))?Number(p.volume):(
      Number.isFinite(Number(p.L))&&Number.isFinite(Number(p.W))&&Number.isFinite(Number(p.H))
        ? Number(p.L)*Number(p.W)*Number(p.H)*boxes
        : 0
-   );
+    );
+   }
    if(Number.isFinite(Number(p.L))&&Number.isFinite(Number(p.W)))a.area+=Number(p.L)*Number(p.W)*boxes;
    if(Number.isFinite(Number(p.L)))a.maxL=Math.max(a.maxL,Number(p.L));
    if(Number.isFinite(Number(p.W)))a.maxW=Math.max(a.maxW,Number(p.W));
    if(Number.isFinite(Number(p.H)))a.maxH=Math.max(a.maxH,Number(p.H));
    return a;
- },{weight:0,gw:0,net:0,volume:0,area:0,refs:pieces.length,maxL:0,maxW:0,maxH:0});
+ },{weight:0,gw:0,net:0,volume:0,area:0,refs:pieces.length,maxL:0,maxW:0,maxH:0,incompleteRows:0,excludedRows:0});
   if(!pdfTotalsOverride)return calculated;
   return {...calculated,...pdfTotalsOverride};
 }
@@ -284,15 +298,35 @@ function stripPageMarkers(value){
     .replace(/\s+/g, " ")
     .trim();
 }
-function parseNumber(value){
+function parseNumber(value, options={}){
  const raw=stripPageMarkers(value).trim().replace(/\s/g,"");
  if(!raw)return NaN;
  const numeric=(raw.match(/[+-]?[0-9][0-9.,]*/) || [""])[0];
  if(!numeric)return NaN;
- const normalized=numeric.includes(",")&&numeric.includes(".")
-  ? (numeric.lastIndexOf(",")>numeric.lastIndexOf(".")?numeric.replace(/\./g,"").replace(",","."):numeric.replace(/,/g,""))
-  : numeric.replace(",",".");
+ const kind=String(options.kind||options.type||"generic").toLowerCase();
+ const isIntegerContext=/^(quantity|qty|boxes|box|integer|count|pieces|pcs)$/i.test(kind);
+ const isDecimalContext=/^(weight|volume|dimension|length|width|height|money|decimal)$/i.test(kind);
+ const separators=numeric.match(/[.,]/g)||[];
+ let normalized=numeric;
+ if(separators.length>1){
+   const lastComma=numeric.lastIndexOf(","), lastDot=numeric.lastIndexOf(".");
+   const decimalIndex=Math.max(lastComma,lastDot);
+   const fractional=numeric.slice(decimalIndex+1);
+   const grouped=/^[0-9]{1,3}(?:[.,][0-9]{3})+$/.test(numeric);
+   if(grouped&&isIntegerContext)normalized=numeric.replace(/[.,]/g,"");
+   else normalized=numeric.slice(0,decimalIndex).replace(/[.,]/g,"")+"."+fractional;
+ }else if(separators.length===1){
+   const separator=separators[0], index=numeric.indexOf(separator), fractional=numeric.slice(index+1);
+   if(fractional.length===3&&isIntegerContext)normalized=numeric.replace(separator,"");
+   else if(fractional.length>=1&&fractional.length<=4)normalized=numeric.replace(separator,".");
+   else normalized=numeric.replace(separator,"");
+ }else if(!/^[-+]?\d+$/.test(numeric))return NaN;
+ if(isDecimalContext&&separators.length===1&&/^[0-9]{1,3}[,][0-9]{3}$/.test(numeric))normalized=numeric.replace(",",".");
  return Number(normalized);
+}
+function finitePdfNumber(value, options={}){
+ const parsed=parseNumber(value,options);
+ return Number.isFinite(parsed)?parsed:NaN;
 }
 function parseHierarchicalTotal(value){
  const raw=stripPageMarkers(value).replace(/\s/g,"");
@@ -344,7 +378,7 @@ function roundExtracted(value){return Number.isFinite(value)?Number(value.toFixe
 function parseExtractedMeasurement(value, kind){
   const match=String(value||"").match(/([+-]?[0-9][0-9.,]*)\s*(ton(?:eladas?)?\s*(?:corta|us)?|t\s*(?:corta|us)?|kg|kgs|kilos|lb|lbs|libras|g|gramos|mm|cm|m|mts|metros|in|inch|pulg(?:adas)?|ft|pies)?/i);
   if(!match)return null;
-  const number=parseNumber(match[1]);
+  const number=parseNumber(match[1],{kind:kind==="weight"?"weight":"dimension"});
   if(!Number.isFinite(number))return null;
   const unit=(match[2]||"").toLowerCase().replace(/\s+/g," ").trim();
   if(kind==="weight"){
@@ -379,7 +413,7 @@ function extractedDimensions(text){
 }
 function extractedPackaging(text){
   const match=/(?:bultos?|cajas?|cartons?|boxes|packages?|paquetes?|pallets?|palets?)\s*[:=x-]?\s*([0-9][0-9.,]*)/i.exec(text);
-  return match?parseNumber(match[1]):null;
+  return match?parseNumber(match[1],{kind:"boxes"}):null;
 }
 function extractedDescription(text){
   const match=/(?:descripci[oó]n(?: de la mercanc[ií]a)?|description|commodity|producto|product|item|carga|mercanc[ií]a)\s*[:=-]\s*([^;|]+)/i.exec(text);
@@ -429,14 +463,29 @@ function extractedReferencesToPieces(result){
 }
 
 function summarizePdfRecords(records){
+  const seenGroups=new Set();
   return records.reduce((totals,record)=>{
-    totals.quantity+=Number(record.q)||0;
-    totals.boxes+=Number(record.boxes)||0;
-    totals.net+=(Number(record.nw)||0)*(Number(record.q)||0);
-    totals.weight+=(Number(record.gw??record.wt)||0)*(Number(record.q)||0);
-    totals.volume+=Number(record.volume)||0;
+    const quantity=Number.isFinite(Number(record.q))?Number(record.q):0;
+    const boxes=Number.isFinite(Number(record.boxes))?Number(record.boxes):0;
+    const net=Number.isFinite(Number(record.nw))?Number(record.nw):0;
+    const weight=Number.isFinite(Number(record.gw??record.wt))?Number(record.gw??record.wt):0;
+    const volume=Number.isFinite(Number(record.volume))?Number(record.volume):0;
+    totals.quantity+=quantity;
+    totals.boxes+=boxes;
+    if(record.groupId&&!seenGroups.has(record.groupId)){
+      seenGroups.add(record.groupId);
+      totals.net+=Number.isFinite(Number(record.groupNetT))?Number(record.groupNetT):net*quantity;
+      totals.weight+=Number.isFinite(Number(record.groupGrossT))?Number(record.groupGrossT):weight*quantity;
+      totals.volume+=Number.isFinite(Number(record.groupVolume))?Number(record.groupVolume):volume;
+    }else if(!record.groupId){
+      totals.net+=net*quantity;
+      totals.weight+=weight*quantity;
+      totals.volume+=volume;
+    }
+    if(record.incomplete)totals.incompleteRows++;
+    if(!Number.isFinite(Number(record.q))||!Number.isFinite(Number(record.gw??record.wt))||!Number.isFinite(Number(record.nw)))totals.excludedRows++;
     return totals;
-  },{quantity:0,boxes:0,net:0,weight:0,volume:0});
+  },{quantity:0,boxes:0,net:0,weight:0,volume:0,incompleteRows:0,excludedRows:0});
 }
 
 function hasSeverePdfMismatch(mismatches){
@@ -556,7 +605,7 @@ function findPdfDimensions(text){
  if(!text||typeof text!=="string")return null;
  const match=/([0-9][0-9.,]*)\s*[x×*]\s*([0-9][0-9.,]*)\s*[x×*]\s*([0-9][0-9.,]*)\s*(mm|cm|m)?(?:\/[^\s]+)?(?:\b|$)/i.exec(text);
  if(match){
-  const rawL=parseNumber(match[1]), rawW=parseNumber(match[2]), rawH=parseNumber(match[3]);
+  const rawL=parseNumber(match[1],{kind:"dimension"}), rawW=parseNumber(match[2],{kind:"dimension"}), rawH=parseNumber(match[3],{kind:"dimension"});
   let unit=(match[4]||"").toLowerCase();
   if(!unit){
    const maxVal=Math.max(rawL,rawW,rawH);
@@ -566,7 +615,7 @@ function findPdfDimensions(text){
  }
  const labelled=/\b(?:largo|length|l)\s*:\s*([0-9][0-9.,]*)\s+(?:ancho|width|w|a)\s*:\s*([0-9][0-9.,]*)\s+(?:alto|height|h)\s*:\s*([0-9][0-9.,]*)\s*(mm|cm|m)?/i.exec(text);
  if(labelled){
-  const rawL=parseNumber(labelled[1]), rawW=parseNumber(labelled[2]), rawH=parseNumber(labelled[3]);
+  const rawL=parseNumber(labelled[1],{kind:"dimension"}), rawW=parseNumber(labelled[2],{kind:"dimension"}), rawH=parseNumber(labelled[3],{kind:"dimension"});
   let unit=(labelled[4]||"").toLowerCase();
   if(!unit){
    const maxVal=Math.max(rawL,rawW,rawH);
@@ -720,43 +769,62 @@ function extractCellFromRow(row, column){
 
 function pdfHierarchicalRecords(items){
   const rows=pdfRows(items);
-  const groupHeader=/^00\s+\S+\s+\d+\s+\S+\s+[0-9][0-9.,]*\s*KG\s+[0-9][0-9.,]*\s*KG\s+[0-9][0-9.,]*\s*M3\b/i;
-  const headerRows=rows.filter(row=>groupHeader.test(row.text));
-  if(headerRows.length<2)return null;
+  const isGroupHeader=row=>{
+    const text=normalizePdfText(row.text);
+    const packaging=/(?:caixa|caja|carton|c[rt]n|pallet|palete|palet|pale|box|bulto|container|contenedor)/i.test(text);
+    const weightCount=(text.match(/\b(?:kg|kgs|lb|lbs|ton|tons|t)\b/gi)||[]).length;
+    const volume=/(?:m3|m³|cbm|cubagem|cubicaje|volumen|volume)/i.test(text);
+    return packaging&&weightCount>=1&&volume&&!detectPdfTableColumns([row]);
+  };
+  const headerRows=rows.filter(isGroupHeader);
+  if(!headerRows.length)return null;
   const groupMarkers=headerRows.map((row,index)=>{
-    const dimensionRow=rows[rows.indexOf(row)+1];
+    const rowIndex=rows.indexOf(row);
+    const nextHeaderIndex=index<headerRows.length-1?rows.indexOf(headerRows[index+1]):rows.length;
+    const dimensionRow=rows.slice(rowIndex+1,nextHeaderIndex).find(candidate=>findPdfDimensions(candidate.text));
     const dimensions=findPdfDimensions(dimensionRow?.text||"");
     const values={
       L:dimensions?convertPdfMeasurement({value:dimensions.L,unit:dimensions.unit||"m"},"m"):NaN,
       W:dimensions?convertPdfMeasurement({value:dimensions.W,unit:dimensions.unit||"m"},"m"):NaN,
       H:dimensions?convertPdfMeasurement({value:dimensions.H,unit:dimensions.unit||"m"},"m"):NaN,
-      gross:parseNumber(row.text.match(/\b([0-9][0-9.,]*)\s*KG\b/i)?.[1]),
-      net:parseNumber(row.text.match(/\b[0-9][0-9.,]*\s*KG\b[^]*?\b([0-9][0-9.,]*)\s*KG\b/i)?.[1]),
-      volume:parseNumber(row.text.match(/\b([0-9][0-9.,]*)\s*M3\b/i)?.[1])
+      gross:parseNumber(row.text.match(/\b([0-9][0-9.,]*)\s*(?:KG|KGS|LB|LBS|TON|T)\b/i)?.[1],{kind:"weight"}),
+      net:parseNumber(row.text.match(/\b[0-9][0-9.,]*\s*(?:KG|KGS|LB|LBS|TON|T)\b[^]*?\b([0-9][0-9.,]*)\s*(?:KG|KGS|LB|LBS|TON|T)\b/i)?.[1],{kind:"weight"}),
+      volume:parseNumber(row.text.match(/\b([0-9][0-9.,]*)\s*(?:M3|M³|CBM)\b/i)?.[1],{kind:"volume"})
     };
     console.log("[pdfHierarchicalRecords] group",{index:index+1,header:row.text,dimensions:{L:values.L,W:values.W,H:values.H},gross:values.gross,net:values.net,volume:values.volume});
-    return {...values,y:row.y,nextY:headerRows[index+1]?.y??-Infinity,header:row.text};
+    return {...values,y:row.y,nextY:headerRows[index+1]?.y??-Infinity,header:row.text,groupId:`group-${index+1}`};
   });
 
-  const productRow=/^[A-Z]{2,5}\d[\w-]+\s/;
+  const productRow=/^[A-Z]{2,8}\d[\w-]+\s/;
+  const productUnit=/\b(?:JG|PZ|PR|EA|PCS?|UN(?:D|ID)?|PIEZAS?)\b/i;
   const records=[];
   groupMarkers.forEach(group=>{
-    const groupRows=rows.filter(row=>row.y<group.y&&row.y>group.nextY&&productRow.test(row.text)&&/\b(?:JG|PZ|PR)\b/i.test(row.text));
-    const quantities=groupRows.map(row=>parseNumber(row.text.match(/\b([0-9][0-9.,]*)\s+(?:JG|PZ|PR)\b/i)?.[1])||1);
+    const seenRows=new Set();
+    const groupRows=rows.filter(row=>{
+      const key=normalizePdfText(row.text);
+      if(seenRows.has(key))return false;
+      const isProduct=row.y<group.y&&row.y>group.nextY&&productRow.test(row.text)&&productUnit.test(row.text);
+      if(isProduct)seenRows.add(key);
+      return isProduct;
+    });
+    const quantities=groupRows.map(row=>parseNumber(row.text.match(/\b([0-9][0-9.,]*)\s+(?:JG|PZ|PR|EA|PCS?|UN(?:D|ID)?)\b/i)?.[1],{kind:"quantity"})||1);
     const totalQuantity=quantities.reduce((sum,value)=>sum+value,0)||1;
     groupRows.forEach((row,index)=>{
       const quantity=quantities[index];
       const code=row.text.match(/^\S+/)?.[0]||`Ítem ${records.length+1}`;
       const unitIndex=row.text.search(/\b(?:JG|PZ|PR)\b/i);
       const description=unitIndex>=0?row.text.slice(unitIndex+2).trim():row.text;
-      records.push({desc:`${code}${description?` - ${description}`:""}`,q:quantity,boxes:index===0?1:0,L:Number.isFinite(group.L)?group.L:null,W:Number.isFinite(group.W)?group.W:null,H:Number.isFinite(group.H)?group.H:null,wt:Number.isFinite(group.gross)?group.gross/1000/totalQuantity:null,gw:Number.isFinite(group.gross)?group.gross/1000/totalQuantity:null,nw:Number.isFinite(group.net)?group.net/1000/totalQuantity:null,volume:index===0&&Number.isFinite(group.volume)?group.volume:null,incomplete:false,apilable:true,acostarse:false,sobresalir:false,fragil:false,peligrosa:false,hierarchicalGroup:group.header});
+      records.push({desc:`${code}${description?` - ${description}`:""}`,q:quantity,boxes:index===0?1:0,L:Number.isFinite(group.L)?group.L:null,W:Number.isFinite(group.W)?group.W:null,H:Number.isFinite(group.H)?group.H:null,wt:null,gw:null,nw:null,volume:null,groupId:group.groupId,groupGrossT:index===0&&Number.isFinite(group.gross)?group.gross/1000:null,groupNetT:index===0&&Number.isFinite(group.net)?group.net/1000:null,groupVolume:index===0&&Number.isFinite(group.volume)?group.volume:null,incomplete:Boolean(!Number.isFinite(group.gross)||!Number.isFinite(group.volume)||!Number.isFinite(group.L)||!Number.isFinite(group.W)||!Number.isFinite(group.H)),apilable:true,acostarse:false,sobresalir:false,fragil:false,peligrosa:false,hierarchicalGroup:group.header});
     });
   });
-  if(records.length<20)return null;
+  // Only switch to hierarchy when a group has actual child products. This avoids
+  // interpreting a regular table header as a pallet header.
+  if(records.length<2)return null;
 
   const footer=rows.filter(row=>/^\s*[0-9][0-9.,]*\s*KG\s+[0-9][0-9.,]*\s*KG\s+[0-9][0-9.,]*\s*M3\s*$/i.test(row.text)).at(-1);
   const footerValues=footer?.text.match(/([0-9][0-9.,]*)\s*KG\s+([0-9][0-9.,]*)\s*KG\s+([0-9][0-9.,]*)\s*M3/i);
-  const declared={gross:footerValues?parseNumber(footerValues[1]):groupMarkers.reduce((sum,group)=>sum+group.gross,0),net:footerValues?parseNumber(footerValues[2]):groupMarkers.reduce((sum,group)=>sum+group.net,0),volume:footerValues?parseNumber(footerValues[3]):groupMarkers.reduce((sum,group)=>sum+group.volume,0),boxes:groupMarkers.length,references:records.length,area:groupMarkers.reduce((sum,group)=>sum+(Number.isFinite(group.L)&&Number.isFinite(group.W)?group.L*group.W:0),0)};
+  const groupTotal=(key)=>groupMarkers.reduce((sum,group)=>sum+(Number.isFinite(group[key])?group[key]:0),0);
+  const declared={gross:footerValues?parseNumber(footerValues[1],{kind:"weight"}):groupTotal("gross"),net:footerValues?parseNumber(footerValues[2],{kind:"weight"}):groupTotal("net"),volume:footerValues?parseNumber(footerValues[3],{kind:"volume"}):groupTotal("volume"),boxes:groupMarkers.length,references:records.length,area:groupMarkers.reduce((sum,group)=>sum+(Number.isFinite(group.L)&&Number.isFinite(group.W)?group.L*group.W:0),0)};
   console.log("[detectPdfHierarchicalPdf] detected",{groups:groupMarkers.length,references:records.length,declared,area:declared.area.toFixed(2)});
   return {records,totals:declared,hierarchical:true};
 }
@@ -794,13 +862,27 @@ function pdfTableRecords(items){
   detectedColumns.forEach(c => { colMap[c.key] = c; });
 
   const records = [];
-  const firstNumberInCell = value => {
-    const match = String(value||"").match(/[+-]?[0-9][0-9.,]*/);
-    return match ? parseNumber(match[0]) : NaN;
+  const declaredTotals = {};
+  const totalRowPattern=/^(?:grand\s+total|gran\s+total|total(?:es)?|subtotal|resumen)\b/i;
+  const extractTotalRow = row => {
+    if(!totalRowPattern.test(normalizePdfText(row.text)))return false;
+    const read=(key,kind)=>finitePdfNumber(extractCellFromRow(row,colMap[key]),{kind});
+    const quantity=read("qty","quantity"), boxes=read("boxes","boxes");
+    const gross=read("totalGw","weight"), net=read("totalNw","weight"), volume=read("vol","volume");
+    if(Number.isFinite(quantity))declaredTotals.quantity=quantity;
+    if(Number.isFinite(boxes))declaredTotals.boxes=boxes;
+    if(Number.isFinite(gross))declaredTotals.gross=gross;
+    if(Number.isFinite(net))declaredTotals.net=net;
+    if(Number.isFinite(volume))declaredTotals.volume=volume;
+    return true;
   };
-  const lastNumberInCell = value => {
+  const firstNumberInCell = (value, kind="generic") => {
+    const match = String(value||"").match(/[+-]?[0-9][0-9.,]*/);
+    return match ? parseNumber(match[0],{kind}) : NaN;
+  };
+  const lastNumberInCell = (value, kind="generic") => {
     const matches = String(value||"").match(/[+-]?[0-9][0-9.,]*/g);
-    return matches?.length ? parseNumber(matches[matches.length-1]) : NaN;
+    return matches?.length ? parseNumber(matches[matches.length-1],{kind}) : NaN;
   };
   const startRowIdx = bestHeaderIndex + 1;
   const tableMinX = Math.min(...detectedColumns.map(column => column.minX));
@@ -834,8 +916,9 @@ function pdfTableRecords(items){
     const row = logicalRows[r];
     const normalized = normalizePdfText(row.text);
 
+    if(extractTotalRow(row)) continue;
     if(summaryFooterPattern.test(normalized)) continue;
-    if(/^(?:total|subtotal|totales|cantidad total|peso neto|peso bruto|volume total|volumen total|grand total|resumen)\b/i.test(normalized)) continue;
+    if(/^(?:cantidad total|peso neto|peso bruto|volume total|volumen total)\b/i.test(normalized)) continue;
     if(detectPdfTableColumns([row])) continue;
     if(!/\d/.test(row.text)) continue;
     const hasTableCell = row.items.some(item => item.x >= tableMinX && item.x < tableMaxX && Boolean(stripPageMarkers(item.text)));
@@ -852,10 +935,10 @@ function pdfTableRecords(items){
     const codeText = extractCellFromRow(row, colMap.code);
     const description = [refText, descText].filter(Boolean).join(" - ") || descText || refText || codeText || `Ítem ${records.length + 1}`;
 
-    const qtyVal = firstNumberInCell(extractCellFromRow(row, colMap.qty));
-    const rawBoxVal = firstNumberInCell(extractCellFromRow(row, colMap.boxes));
+    const qtyVal = firstNumberInCell(extractCellFromRow(row, colMap.qty),"quantity");
+    const rawBoxVal = firstNumberInCell(extractCellFromRow(row, colMap.boxes),"boxes");
     const rowPackageMatch = /(?:^|\s)([0-9][0-9.,]*)\s*(?:carton|cartons|ctn|ctns|caja|cajas|bulto|bultos)\b/i.exec(row.text);
-    const explicitPackageCount = rowPackageMatch ? parseNumber(rowPackageMatch[1]) : NaN;
+    const explicitPackageCount = rowPackageMatch ? parseNumber(rowPackageMatch[1],{kind:"boxes"}) : NaN;
     const hasRowWeight = /\b(?:kg|kgs|lb|lbs|ton|tons|t)\b/i.test(row.text);
     const fallbackPackageCount = Number.isFinite(declaredPackageCount) ? declaredPackageCount : qtyVal;
     const packageFallback = !Number.isFinite(rawBoxVal) && !Number.isFinite(explicitPackageCount) && !hasRowWeight && !colMap.boxes ? 0 : fallbackPackageCount;
@@ -865,7 +948,7 @@ function pdfTableRecords(items){
         ? sanitizePdfPackageCount(explicitPackageCount, packageFallback)
         : packageFallback === 0 ? 0 : sanitizePdfPackageCount(NaN, packageFallback);
     const suspiciousBoxId=Number.isFinite(rawBoxVal)&&(rawBoxVal>9999 || rawBoxVal>=1000&&!Number.isFinite(qtyVal));
-    const quantity = suspiciousBoxId ? 1 : Number.isFinite(qtyVal) && qtyVal > 0 ? qtyVal : boxVal;
+    const quantity = suspiciousBoxId ? 1 : Number.isFinite(qtyVal) && qtyVal > 0 ? qtyVal : 0;
     const boxes = boxVal;
 
     let L = NaN, W = NaN, H = NaN;
@@ -881,9 +964,9 @@ function pdfTableRecords(items){
     }
 
     if(!Number.isFinite(L) || !Number.isFinite(W) || !Number.isFinite(H)){
-      const rawL = parseNumber(extractCellFromRow(row, colMap.len));
-      const rawW = parseNumber(extractCellFromRow(row, colMap.width));
-      const rawH = parseNumber(extractCellFromRow(row, colMap.height));
+      const rawL = parseNumber(extractCellFromRow(row, colMap.len),{kind:"dimension"});
+      const rawW = parseNumber(extractCellFromRow(row, colMap.width),{kind:"dimension"});
+      const rawH = parseNumber(extractCellFromRow(row, colMap.height),{kind:"dimension"});
 
       if(Number.isFinite(rawL) && Number.isFinite(rawW) && Number.isFinite(rawH)){
         const dimensionUnitText=extractCellFromRow(row,colMap.dimUnit).toLowerCase();
@@ -898,10 +981,10 @@ function pdfTableRecords(items){
       }
     }
 
-    const gwTotVal = lastNumberInCell(extractCellFromRow(row, colMap.totalGw));
-    const nwTotVal = lastNumberInCell(extractCellFromRow(row, colMap.totalNw));
-    const gwUnitVal = firstNumberInCell(extractCellFromRow(row, colMap.gwUnit));
-    const nwUnitVal = firstNumberInCell(extractCellFromRow(row, colMap.nwUnit));
+    const gwTotVal = lastNumberInCell(extractCellFromRow(row, colMap.totalGw),"weight");
+    const nwTotVal = lastNumberInCell(extractCellFromRow(row, colMap.totalNw),"weight");
+    const gwUnitVal = firstNumberInCell(extractCellFromRow(row, colMap.gwUnit),"weight");
+    const nwUnitVal = firstNumberInCell(extractCellFromRow(row, colMap.nwUnit),"weight");
 
     const rowWeightUnit=(extractCellFromRow(row,colMap.weightUnit).match(/kg|kgs|lb|lbs|g|ton(?:eladas?)?|t/i)||[])[0]||"";
     const unitGW = colMap.totalGw?.unit || colMap.gwUnit?.unit || rowWeightUnit || "kg";
@@ -929,7 +1012,7 @@ function pdfTableRecords(items){
     let grossKg = rowGrossKg;
     let netKg = rowNetKg;
 
-    const cbmVal = parseNumber(extractCellFromRow(row, colMap.vol));
+    const cbmVal = parseNumber(extractCellFromRow(row, colMap.vol),{kind:"volume"});
     const volume = Number.isFinite(cbmVal) && cbmVal > 0
       ? cbmVal
       : (Number.isFinite(L) && Number.isFinite(W) && Number.isFinite(H) ? L * W * H * boxes : NaN);
@@ -951,7 +1034,7 @@ function pdfTableRecords(items){
       gw: Number.isFinite(grossKg)?(grossKg / 1000) / quantity:null,
       nw: Number.isFinite(netKg)?(netKg / 1000) / quantity:null,
       volume: Number.isFinite(volume)?Number(volume.toFixed(4)):null,
-      incomplete:Boolean(!Number.isFinite(grossKg)||!Number.isFinite(volume)||!Number.isFinite(L)||!Number.isFinite(W)||!Number.isFinite(H)),
+      incomplete:Boolean(!Number.isFinite(qtyVal)||!Number.isFinite(grossKg)||!Number.isFinite(volume)||!Number.isFinite(L)||!Number.isFinite(W)||!Number.isFinite(H)),
       apilable: true,
       acostarse: false,
       sobresalir: false,
@@ -960,18 +1043,21 @@ function pdfTableRecords(items){
     });
   }
 
-  const findTot = (aliases) => {
+  const findTot = (aliases, kind="generic") => {
     const match = new RegExp(`(?:${aliases.join("|")})\\s*[:=]?\\s*([0-9][0-9.,]*)`, "i").exec(documentText);
-    return match ? parseNumber(match[1]) : NaN;
+    return match ? parseNumber(match[1],{kind}) : NaN;
   };
 
   const totals = {
-    quantity: findTot(["cantidad total", "total quantity", "total pcs", "total piezas"]),
-    boxes: findTot(["total de cajas", "total cajas", "total cartons", "total ctns", "total bultos"]),
-    net: findTot(["peso neto total", "total nw", "peso neto"]),
-    gross: findTot(["peso bruto total", "total gw", "peso bruto", "peso total"]),
-    volume: findTot(["volumen total", "volume total", "total cbm", "total m3", "cubaje"])
+    quantity: findTot(["cantidad total", "total quantity", "total pcs", "total piezas"],"quantity"),
+    boxes: findTot(["total de cajas", "total cajas", "total cartons", "total ctns", "total bultos"],"boxes"),
+    net: findTot(["peso neto total", "total nw", "peso neto"],"weight"),
+    gross: findTot(["peso bruto total", "total gw", "peso bruto", "peso total"],"weight"),
+    volume: findTot(["volumen total", "volume total", "total cbm", "total m3", "cubaje"],"volume")
   };
+  Object.entries(declaredTotals).forEach(([key,value])=>{
+    if(Number.isFinite(value))totals[key]=value;
+  });
   const cartonSummaries = [...documentText.matchAll(/(?:^|\s)([0-9][0-9.,]*)\s+cartons?\s+([0-9][0-9.,]*)\s*(?:kg|kgs)\b/gi)];
   const cartonSummary = cartonSummaries.at(-1);
   if(cartonSummary){
@@ -1139,21 +1225,31 @@ function pdfSummaryTotals(items){
   const match=labels.find(candidate=>candidate.pattern.test(label.text));
   if(!match||Number.isFinite(result[match.key]))return;
   const below=rows.slice(index+1).find(candidate=>candidate.y<row.y&&candidate.y>row.y-35);
-  const value=below?.items.filter(item=>item.x>=label.x-12&&item.x<=label.x+Math.max(label.width||0,80)+12).map(item=>parseNumber(item.text)).find(Number.isFinite);
+  const kind=match.key==="boxes"?"boxes":match.key==="volume"?"volume":"weight";
+  const value=below?.items.filter(item=>item.x>=label.x-12&&item.x<=label.x+Math.max(label.width||0,80)+12).map(item=>parseNumber(item.text,{kind})).find(Number.isFinite);
   if(Number.isFinite(value))result[match.key]=value;
  }));
  return result;
 }
 
 function comparePdfTotals(expected,actual){
+ return validatePdfTotals(expected,actual).filter(item=>item.status==="review");
+}
+function validatePdfTotals(expected,actual){
  const checks=[
-  ["cantidad",expected.quantity,actual.quantity,0],
-  ["cajas",expected.boxes,actual.boxes,0],
-  ["peso neto",expected.net,actual.net*1000,1.0],
-  ["peso bruto",expected.gross,actual.weight*1000,1.0],
-  ["volumen",expected.volume,actual.volume,0.1]
+  ["cantidad",expected.quantity,actual.quantity],
+  ["cajas",expected.boxes,actual.boxes],
+  ["peso neto",expected.net,Number(actual.net)*1000],
+  ["peso bruto",expected.gross,Number(actual.weight)*1000],
+  ["volumen",expected.volume,actual.volume]
  ];
- return checks.filter(([,documentValue,calculated,tolerance])=>Number.isFinite(documentValue)&&Number.isFinite(calculated)&&Math.abs(documentValue-calculated)>tolerance).map(([name,documentValue,calculated,tolerance])=>({name,documentValue,calculated,tolerance,difference:calculated-documentValue}));
+ return checks.map(([name,documentValue,calculated])=>{
+  const declared=Number(documentValue), computed=Number(calculated);
+  if(!Number.isFinite(declared))return {name,documentValue:null,calculated:Number.isFinite(computed)?computed:null,status:"unknown",tolerance:null,difference:null};
+  const tolerance=Math.max(Math.abs(declared)*0.01,0.001);
+  const valid=Number.isFinite(computed);
+  return {name,documentValue:declared,calculated:valid?computed:null,status:valid&&Math.abs(computed-declared)<=tolerance?"ok":"review",tolerance,difference:valid?computed-declared:null};
+ });
 }
 
 function pdfRecord(text,index){
@@ -1202,6 +1298,7 @@ async function importarPDF(file){
  // 1. LIMPIEZA COMPLETA: Cada importación inicia 100% desde cero
  pieces = [];
  pdfTotalsOverride = null;
+ pdfImportMeta = { incompleteRows: 0, excludedRows: 0, validation: null };
  lastAnalysis = null;
  editingIndex = -1;
  if($("pDesc")) $("pDesc").value = "";
@@ -1274,7 +1371,8 @@ async function importarPDF(file){
 
  const declaredTotals={...(table.totals||{}),...pdfSummaryTotals(items)};
  let importedTotals=summarizePdfRecords(records);
- let mismatches=comparePdfTotals(declaredTotals,importedTotals);
+ let validationResult=validatePdfTotals(declaredTotals,importedTotals);
+ let mismatches=validationResult.filter(item=>item.status==="review");
  let usedAiFallback=false;
  let fallbackMessage="";
 
@@ -1292,7 +1390,8 @@ async function importarPDF(file){
       if(!Number.isFinite(declaredTotals[key])&&Number.isFinite(Number(aiTotals[key])))declaredTotals[key]=Number(aiTotals[key]);
      });
      importedTotals=summarizePdfRecords(records);
-     mismatches=comparePdfTotals(declaredTotals,importedTotals);
+    validationResult=validatePdfTotals(declaredTotals,importedTotals);
+    mismatches=validationResult.filter(item=>item.status==="review");
     }
    }catch(error){
     fallbackMessage=` El respaldo IA no estuvo disponible: ${error.message}.`;
@@ -1316,27 +1415,22 @@ async function importarPDF(file){
  updateDashboard();
 
  const severeMismatch=hasSeverePdfMismatch(mismatches);
-  if(Number.isFinite(declaredTotals.volume)&&Math.abs(importedTotals.volume-declaredTotals.volume)<=0.01){
-    pdfTotalsOverride={...(pdfTotalsOverride||{}),volume:declaredTotals.volume};
-  }
- if(severeMismatch){
-  pdfTotalsOverride={};
-  if(Number.isFinite(declaredTotals.gross))pdfTotalsOverride.weight=declaredTotals.gross/1000;
-  if(Number.isFinite(declaredTotals.net))pdfTotalsOverride.net=declaredTotals.net/1000;
-  if(Number.isFinite(declaredTotals.volume))pdfTotalsOverride.volume=declaredTotals.volume;
-  if(Number.isFinite(declaredTotals.area))pdfTotalsOverride.area=declaredTotals.area;
-  renderPieces();
-  updateDashboard();
- }
+ pdfTotalsOverride=null;
+ pdfImportMeta={
+  incompleteRows: importedTotals.incompleteRows||records.filter(record=>record.incomplete).length,
+  excludedRows: importedTotals.excludedRows||0,
+  validation:{status:mismatches.length?"review":"ok",checks:validationResult,declared:declaredTotals,calculated:importedTotals}
+ };
+ updateDashboard();
 
  // MODO DEBUG estructurado en consola
  const debugTable = [
-   { "Métrica": "Referencias", "Declarado PDF": Number.isFinite(declaredTotals.boxes) ? declaredTotals.boxes : "-", "Calculado": importadas, "Diferencia": Number.isFinite(declaredTotals.boxes) ? importadas-declaredTotals.boxes : "-", "Estado": Number.isFinite(declaredTotals.boxes)&&importadas!==declaredTotals.boxes ? "REVISAR" : "OK" },
+  { "Métrica": "Referencias", "Declarado PDF": Number.isFinite(declaredTotals.boxes) ? declaredTotals.boxes : "-", "Calculado": importadas, "Diferencia": Number.isFinite(declaredTotals.boxes) ? importadas-declaredTotals.boxes : "-", "Estado": validationResult.find(item=>item.name==="cajas")?.status==="review" ? "REVISAR" : "OK" },
     { "Métrica": "Piezas (Und)", "Declarado PDF": declaredTotals.quantity ?? "N/D", "Calculado": importedTotals.quantity, "Diferencia": Number.isFinite(declaredTotals.quantity) ? (importedTotals.quantity - declaredTotals.quantity) : "-", "Estado": (!Number.isFinite(declaredTotals.quantity) || importedTotals.quantity === declaredTotals.quantity) ? "OK" : "REVISAR" },
     { "Métrica": "Cajas / Bultos", "Declarado PDF": declaredTotals.boxes ?? "N/D", "Calculado": importedTotals.boxes, "Diferencia": Number.isFinite(declaredTotals.boxes) ? (importedTotals.boxes - declaredTotals.boxes) : "-", "Estado": (!Number.isFinite(declaredTotals.boxes) || importedTotals.boxes === declaredTotals.boxes) ? "OK" : "REVISAR" },
-    { "Métrica": "Peso Neto (kg)", "Declarado PDF": declaredTotals.net ? declaredTotals.net.toFixed(2) : "N/D", "Calculado": (importedTotals.net * 1000).toFixed(2), "Diferencia": Number.isFinite(declaredTotals.net) ? ((importedTotals.net * 1000) - declaredTotals.net).toFixed(2) + " kg" : "-", "Estado": (!Number.isFinite(declaredTotals.net) || Math.abs((importedTotals.net * 1000) - declaredTotals.net) <= 1.0) ? "OK" : "REVISAR" },
-    { "Métrica": "Peso Bruto (kg)", "Declarado PDF": declaredTotals.gross ? declaredTotals.gross.toFixed(2) : "N/D", "Calculado": (importedTotals.weight * 1000).toFixed(2), "Diferencia": Number.isFinite(declaredTotals.gross) ? ((importedTotals.weight * 1000) - declaredTotals.gross).toFixed(2) + " kg" : "-", "Estado": (!Number.isFinite(declaredTotals.gross) || Math.abs((importedTotals.weight * 1000) - declaredTotals.gross) <= 1.0) ? "OK" : "REVISAR" },
-    { "Métrica": "Volumen (m³)", "Declarado PDF": declaredTotals.volume ? declaredTotals.volume.toFixed(2) : "N/D", "Calculado": importedTotals.volume.toFixed(2), "Diferencia": Number.isFinite(declaredTotals.volume) ? (importedTotals.volume - declaredTotals.volume).toFixed(2) + " m³" : "-", "Estado": (!Number.isFinite(declaredTotals.volume) || Math.abs(importedTotals.volume - declaredTotals.volume) <= 0.1) ? "OK" : "REVISAR" }
+    { "Métrica": "Peso Neto (kg)", "Declarado PDF": declaredTotals.net ? declaredTotals.net.toFixed(2) : "N/D", "Calculado": (importedTotals.net * 1000).toFixed(2), "Diferencia": Number.isFinite(declaredTotals.net) ? ((importedTotals.net * 1000) - declaredTotals.net).toFixed(2) + " kg" : "-", "Estado": validationResult.find(item=>item.name==="peso neto")?.status==="review" ? "REVISAR" : "OK" },
+    { "Métrica": "Peso Bruto (kg)", "Declarado PDF": declaredTotals.gross ? declaredTotals.gross.toFixed(2) : "N/D", "Calculado": (importedTotals.weight * 1000).toFixed(2), "Diferencia": Number.isFinite(declaredTotals.gross) ? ((importedTotals.weight * 1000) - declaredTotals.gross).toFixed(2) + " kg" : "-", "Estado": validationResult.find(item=>item.name==="peso bruto")?.status==="review" ? "REVISAR" : "OK" },
+    { "Métrica": "Volumen (m³)", "Declarado PDF": declaredTotals.volume ? declaredTotals.volume.toFixed(2) : "N/D", "Calculado": importedTotals.volume.toFixed(2), "Diferencia": Number.isFinite(declaredTotals.volume) ? (importedTotals.volume - declaredTotals.volume).toFixed(2) + " m³" : "-", "Estado": validationResult.find(item=>item.name==="volumen")?.status==="review" ? "REVISAR" : "OK" }
  ];
 
  console.group(`🔍 [DEBUG PDF] Archivo: ${file.name}`);
@@ -1345,10 +1439,12 @@ async function importarPDF(file){
 
  if(importadas){
   if(mismatches.length){
-    alert(`Alerta: los datos calculados no coinciden con los totales del PDF (${mismatches.map(item=>`${item.name}: ${item.difference>0?"+":""}${item.difference.toFixed(2)}`).join(", ")}). ${severeMismatch?"Se mostrará el total declarado por el documento.":"Se conservaron los datos individuales extraídos."}`);
+    alert(`Revisar PDF: los datos calculados no coinciden con los totales declarados (${mismatches.map(item=>`${item.name}: calculado ${Number(item.calculated).toFixed(3)} vs declarado ${Number(item.documentValue).toFixed(3)}`).join(", ")}). Se conserva el cálculo parcial y se muestran ambos valores.`);
   }
   const shownTotals=totals();
-  const statusMsg = `PDF "${file.name}" procesado: ${importadas} ref(s) | ${Number.isFinite(declaredTotals.boxes)?declaredTotals.boxes:shownTotals.boxes} cajas | ${(shownTotals.weight).toFixed(5)} t (${(shownTotals.weight*1000).toFixed(2)} kg) | ${shownTotals.volume.toFixed(3)} m³${usedAiFallback?" | respaldo IA":""}${severeMismatch?" | tomado del total declarado en el documento":""}${fallbackMessage}`;
+  const partialMsg=(pdfImportMeta.incompleteRows||pdfImportMeta.excludedRows)?` | ${pdfImportMeta.incompleteRows} fila(s) incompleta(s), ${pdfImportMeta.excludedRows} excluida(s) del cálculo total`:"";
+  const validationMsg=mismatches.length?" | REVISAR: declarado vs calculado":" | totales validados";
+  const statusMsg = `PDF "${file.name}" procesado: ${importadas} ref(s) | ${Number.isFinite(declaredTotals.boxes)?declaredTotals.boxes:shownTotals.boxes} cajas | ${(shownTotals.weight).toFixed(5)} t (${(shownTotals.weight*1000).toFixed(2)} kg) | ${shownTotals.volume.toFixed(3)} m³${validationMsg}${partialMsg}${usedAiFallback?" | respaldo IA":""}${fallbackMessage}`;
   $("excelHelp").textContent = statusMsg;
   alert(statusMsg);
  } else {
