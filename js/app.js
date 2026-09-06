@@ -183,18 +183,19 @@ function renderPieces(){
  let el=$("pieceList");
  if(!pieces.length){el.innerHTML='<div class="empty">No hay referencias guardadas. Agrega la primera pieza o grupo, o impórtalas desde Excel o PDF.</div>'}
  else el.innerHTML=pieces.map((p,i)=>{
+  const groupOwner=p.groupId?pieces.find(candidate=>candidate.groupId===p.groupId&&(Number.isFinite(Number(candidate.groupGrossT))||Number.isFinite(Number(candidate.groupVolume)))):null;
   const boxesLabel = p.boxes ? ` · ${p.boxes} cajas` : "";
   const hasDimensions=Number.isFinite(p.L)&&Number.isFinite(p.W)&&Number.isFinite(p.H);
   const hasWeight=Number.isFinite(p.wt);
-  const vol = Number.isFinite(Number(p.volume))?Number(p.volume).toFixed(3):hasDimensions?(p.L*p.W*p.H*(p.boxes||p.q)).toFixed(3):"N/D";
+  const vol = Number.isFinite(Number(p.volume))?Number(p.volume).toFixed(3):Number.isFinite(Number(groupOwner?.groupVolume))?`Incluido en grupo (${Number(groupOwner.groupVolume).toFixed(3)})`:hasDimensions?(p.L*p.W*p.H*(p.boxes||p.q)).toFixed(3):"N/D";
   const area = hasDimensions?(p.L*p.W*(p.boxes||p.q)).toFixed(2):"N/D";
-  const pesoTotT = hasWeight?(p.wt*p.q).toFixed(5):"N/D";
-  const pesoTotKg = hasWeight?((p.wt*p.q)*1000).toFixed(2):"N/D";
+  const pesoTotT = hasWeight?(p.wt*p.q).toFixed(5):Number.isFinite(Number(groupOwner?.groupGrossT))?`Incluido en grupo (${Number(groupOwner.groupGrossT).toFixed(5)})`:"N/D";
+  const pesoTotKg = hasWeight?((p.wt*p.q)*1000).toFixed(2):"";
   const dimCm = hasDimensions?`${Math.round(p.L*100)} × ${Math.round(p.W*100)} × ${Math.round(p.H*100)} cm`:"N/D";
   const dimM = hasDimensions?`${p.L.toFixed(2)} × ${p.W.toFixed(2)} × ${p.H.toFixed(2)} m`:"N/D";
   return `<div class="piece"><div class="piece-grid">
  <div><b>${esc(p.desc)}</b><small>${p.q} und${boxesLabel} · ${dimCm} <span style="color:#8f9bad">(${dimM})</span></small></div>
- <div><small>Peso</small><b>${pesoTotT} t</b> <span style="font-size:10px;color:#8f9bad">(${pesoTotKg} kg)</span></div>
+ <div><small>Peso</small><b>${pesoTotT}${hasWeight?" t":""}</b> ${pesoTotKg?`<span style="font-size:10px;color:#8f9bad">(${pesoTotKg} kg)</span>`:""}</div>
  <div><small>Volumen</small><b>${vol} m³</b></div>
  <div><small>Área piso</small><b>${area} m²</b></div>
  <div><small>Apilable</small><b>${p.apilable?"Sí":"No"}</b></div>
@@ -217,12 +218,13 @@ function renderMeasuresTable(){
  }
  if(!pieces.length){tbl.innerHTML='<tr><td colspan="5" class="muted-cell" style="text-align:center;padding:16px">Sin referencias registradas.</td></tr>';return}
  tbl.innerHTML=pieces.map(p=>{
-   const totT = (p.wt*p.q).toFixed(3);
-   const totKg = (p.wt*p.q*1000).toFixed(1);
-   const vol = (Number.isFinite(Number(p.volume))?Number(p.volume):p.L*p.W*p.H*(p.boxes||p.q)).toFixed(3);
+   const groupOwner=p.groupId?pieces.find(candidate=>candidate.groupId===p.groupId&&(Number.isFinite(Number(candidate.groupGrossT))||Number.isFinite(Number(candidate.groupVolume)))):null;
+   const totT = Number.isFinite(Number(p.wt))?(p.wt*p.q).toFixed(3):Number.isFinite(Number(groupOwner?.groupGrossT))?`Incluido en grupo (${Number(groupOwner.groupGrossT).toFixed(3)} t)`:"N/D";
+   const totKg = Number.isFinite(Number(p.wt))?(p.wt*p.q*1000).toFixed(1):"";
+   const vol = Number.isFinite(Number(p.volume))?Number(p.volume).toFixed(3):Number.isFinite(Number(groupOwner?.groupVolume))?`Incluido en grupo (${Number(groupOwner.groupVolume).toFixed(3)})`:Number.isFinite(Number(p.L)*Number(p.W)*Number(p.H))?(p.L*p.W*p.H*(p.boxes||p.q)).toFixed(3):"N/D";
    const cantLabel = p.boxes ? `${p.q} (${p.boxes} cjs)` : `${p.q}`;
    const dimStr = `${Math.round(p.L*100)}×${Math.round(p.W*100)}×${Math.round(p.H*100)} cm`;
-   return `<tr><td>${esc(p.desc)}</td><td>${cantLabel}</td><td class="muted-cell">${dimStr}</td><td>${totT} t <small style="color:#8f9bad">(${totKg} kg)</small></td><td>${vol}</td></tr>`;
+  return `<tr><td>${esc(p.desc)}</td><td>${cantLabel}</td><td class="muted-cell">${dimStr}</td><td>${totT}${totKg?` t <small style="color:#8f9bad">(${totKg} kg)</small>`:""}</td><td>${vol}</td></tr>`;
  }).join("");
 }
 function isContainer(){return $("tipoCarga")?.value==="Contenedor"}
@@ -645,12 +647,24 @@ function convertPdfMeasurement(measurement,defaultUnit){
  if(["lb","lbs"].includes(unit))return measurement.value*0.00045359237;
  return measurement.value;
 }
+function pdfMedian(values){
+ const sorted=values.filter(value=>Number.isFinite(value)&&value>0).sort((a,b)=>a-b);
+ return sorted.length?sorted[Math.floor(sorted.length/2)]:NaN;
+}
+function pdfRowTolerance(items){
+ const fontHeight=pdfMedian(items.map(item=>Math.abs(Number(item.height)||Number(item.transform?.[3])||0)));
+ if(Number.isFinite(fontHeight))return fontHeight/2;
+ const yValues=[...new Set(items.map(item=>Number(item.transform?.[5])).filter(Number.isFinite))].sort((a,b)=>a-b);
+ const gaps=yValues.slice(1).map((y,index)=>y-yValues[index]).filter(gap=>gap>0);
+ return Math.min(...gaps)/2;
+}
 function pdfRows(items){
  const groups=[];
+ const rowTolerance=pdfRowTolerance(items);
  items.filter(item=>String(item.str||"").trim()).forEach(item=>{
   const x=Number(item.transform?.[4]||0), y=Number(item.transform?.[5]||0);
   const width=Number(item.width||(String(item.str).length*6));
-  const group=groups.find(candidate=>Math.abs(candidate.y-y)<5.5);
+  const group=groups.find(candidate=>Math.abs(candidate.y-y)<=rowTolerance);
   if(group){
     group.items.push({text:String(item.str).trim(),x,width});
   } else {
@@ -664,6 +678,15 @@ function pdfRows(items){
  })).filter(row=>row.text);
 }
 function pdfLines(items){return pdfRows(items).map(row=>row.text)}
+function pdfLayoutMetrics(rows){
+ const yValues=[...new Set(rows.map(row=>row.y))].sort((a,b)=>b-a);
+ const gaps=yValues.slice(1).map((y,index)=>yValues[index]-y).filter(gap=>gap>0&&Number.isFinite(gap)).sort((a,b)=>a-b);
+ const median=values=>values.length?values[Math.floor(values.length/2)]:0;
+ // The smaller recurring gaps represent line spacing; page gaps and section gaps
+ // are excluded by taking the lower half of observed positive gaps.
+ const rowGap=median(gaps.slice(0,Math.max(1,Math.ceil(gaps.length/2))))||1;
+ return {rowGap};
+}
 
 function detectPdfTableColumns(headerRows){
   const combinedItems = [];
@@ -837,6 +860,7 @@ function pdfHierarchicalRecords(items){
 
 function pdfPalletPackingRecords(items){
   const rows=pdfRows(items);
+  const layout=pdfLayoutMetrics(rows);
   const headerRows=rows.filter(row=>/\b(?:item\s*code|itemname|qty|n\.?\s*vol\.?|n\.w\.|g\.w\.)\b/i.test(row.text));
   const headerItems=headerRows.flatMap(row=>row.items);
   const findHeaderX=pattern=>headerItems.find(item=>pattern.test(String(item.text||"")))?.x;
@@ -848,7 +872,18 @@ function pdfPalletPackingRecords(items){
   const palletX=findHeaderX(/^no\.?(?:\s+type)?$/i);
   if(![codeX,qtyX,netVolumeX,netWeightX,grossWeightX].every(Number.isFinite))return null;
 
-  const within=(item,x,range=24)=>Math.abs(item.x-x)<=range;
+  const semanticHeaderItems=headerItems.filter(item=>/^(?:no\.?|item\s*code|qty|n\.?\s*vol\.?|g\.?\s*vol\.?|n\.w\.|g\.w\.)$/i.test(String(item.text||"").trim()));
+  const headerX=[...new Set(semanticHeaderItems.map(item=>item.x))].sort((a,b)=>a-b);
+  const columnBounds=x=>{
+    const index=headerX.indexOf(x);
+    const left=index>0?x-headerX[index-1]:Infinity;
+    const right=index<headerX.length-1?headerX[index+1]-x:Infinity;
+    const headerWidth=pdfMedian(semanticHeaderItems.filter(item=>item.x===x).map(item=>item.width))||0;
+    const leftPadding=Math.min(left,right)/2+headerWidth/2;
+    const rightPadding=right/2+headerWidth/2;
+    return {min:x-leftPadding,max:x+rightPadding};
+  };
+  const within=(item,x)=>{const bounds=columnBounds(x);return item.x>=bounds.min&&item.x<bounds.max};
   const numberAt=(row,x,kind)=>{
     const numericItems=row.items.filter(candidate=>within(candidate,x)&&/[0-9]/.test(candidate.text)).sort((a,b)=>a.x-b.x);
     const joined=parseNumber(numericItems.map(candidate=>candidate.text).join(""),{kind});
@@ -867,7 +902,7 @@ function pdfPalletPackingRecords(items){
   // blocks first, then associate item rows to the closest block by Y position.
   for(const row of rows){
     if(/\b(?:pallet|palet)\b/i.test(row.text)){
-      const nearby=rows.filter(candidate=>Math.abs(candidate.y-row.y)<=35).map(candidate=>candidate.text).join(" ");
+      const nearby=rows.filter(candidate=>Math.abs(candidate.y-row.y)<=layout.rowGap*3).map(candidate=>candidate.text).join(" ");
       const boxesMatch=/\b(?:cajas?|boxes?|cartons?)\s*:\s*([0-9][0-9.,]*)/i.exec(nearby);
       if(!boxesMatch)continue;
       const dimensions={L:NaN,W:NaN,H:NaN};
@@ -888,18 +923,19 @@ function pdfPalletPackingRecords(items){
   for(const row of rows){
     const text=normalizePdfText(row.text);
     if(/^(?:sub\s*totals?|totals?|grand total)\b/i.test(text))continue;
-    const codeItem=row.items.find(item=>within(item,codeX,70)&&productCode.test(String(item.text||"").trim()));
+    const codeItem=row.items.find(item=>within(item,codeX)&&productCode.test(String(item.text||"").trim()));
     const quantity=numberAt(row,qtyX,"quantity");
     const netVolume=numberAt(row,netVolumeX,"volume");
     const netWeight=numberAt(row,netWeightX,"weight");
-    const ordinalItem=row.items.find(item=>item.x>=codeX-90&&item.x<codeX-15&&/^\d+$/.test(String(item.text||"").trim()));
+    const previousHeaderX=headerX.filter(x=>x<codeX).at(-1);
+    const ordinalItem=row.items.find(item=>item.x>=previousHeaderX&&item.x<codeX&&/^\d+$/.test(String(item.text||"").trim()));
     const ordinal=ordinalItem?parseNumber(ordinalItem.text,{kind:"quantity"}):Number.isFinite(palletX)?numberAt(row,palletX,"quantity"):NaN;
     if(!codeItem||!Number.isFinite(quantity)||quantity<=0)continue;
     const identity=`${Number.isFinite(ordinal)?ordinal:""}:${codeItem.text}`;
     if(seenItems.has(identity))continue;
     seenItems.add(identity);
     const group=groups.slice().sort((a,b)=>Math.abs(a.y-row.y)-Math.abs(b.y-row.y))[0];
-    if(!group||Math.abs(group.y-row.y)>250)continue;
+    if(!group)continue;
     const hasDimensions=[group.L,group.W,group.H].every(Number.isFinite);
     const record={
       desc:codeItem.text.trim(), q:quantity, boxes:group.firstRecord?0:group.boxes,
