@@ -79,4 +79,21 @@ assert.equal(mismatchTable.totals.gross, 900);
 const mismatch = context.api.validatePdfTotals(mismatchTable.totals, context.api.summarizePdfRecords(mismatchTable.records));
 assert.equal(mismatch.find(check => check.name === "peso bruto").status, "review");
 
+// Split column headers plus pallet metadata on adjacent lines are parsed as one hierarchy.
+const palletColumns = [["No.", 32], ["ITEM CODE", 125], ["N. Vol.", 560], ["G. Vol.", 596], ["N.W.", 643], ["G.W.", 683], ["QTY", 735]];
+const palletItems = palletColumns.map(([str, x]) => ({ str, transform: [1, 0, 0, 1, x, 800] }));
+[
+  ["(m3)", 564, 794], ["(Kg)", 647, 794],
+  ["1 Large: 120", 48, 760], ["Pallet Width: 100", 42, 748], ["CAJAS: 2 Height: 100", 24, 736],
+  ["1", 94, 720], ["L-TEST-0001", 108, 720], ["0.5000", 565, 720], ["10", 652, 720], ["5", 744, 720],
+  ["SubTotals:", 509, 700], ["0.5000", 565, 700], ["0.60", 611, 700], ["10", 647, 700], ["12", 703, 700], ["5", 744, 700],
+  ["Totals:", 475, 680], ["0.5000", 565, 680], ["0.60", 601, 680], ["10", 649, 680], ["12", 694, 680], ["5", 740, 680]
+].forEach(([str, x, y]) => palletItems.push({ str, transform: [1, 0, 0, 1, x, y] }));
+const palletTable = context.api.pdfTableRecords(palletItems);
+assert.equal(palletTable.hierarchical, true);
+assert.equal(palletTable.records.length, 1);
+assert.equal(palletTable.records[0].boxes, 2);
+assert.equal(palletTable.totals.volume, 0.5);
+assert.equal(palletTable.totals.gross, 12);
+
 console.log("PDF parser numeric context tests passed");
