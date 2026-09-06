@@ -23,7 +23,7 @@ const context = {
   window: {},
   localStorage: { getItem() { return null; }, setItem() {} }
 };
-vm.runInNewContext(`${source}\nthis.api={parseNumber,pdfTableRecords,summarizePdfRecords,validatePdfTotals};`, context);
+vm.runInNewContext(`${source}\nthis.api={parseNumber,pdfTableRecords,summarizePdfRecords,validatePdfTotals,pdfMismatchMessage};`, context);
 
 assert.equal(context.api.parseNumber("1,260", { kind: "quantity" }), 1260);
 assert.equal(context.api.parseNumber("1,85", { kind: "volume" }), 1.85);
@@ -78,6 +78,7 @@ assert.equal(mismatchTable.records.length, 1);
 assert.equal(mismatchTable.totals.gross, 900);
 const mismatch = context.api.validatePdfTotals(mismatchTable.totals, context.api.summarizePdfRecords(mismatchTable.records));
 assert.equal(mismatch.find(check => check.name === "peso bruto").status, "review");
+assert.match(context.api.pdfMismatchMessage(mismatch), /Peso bruto calculado: 1000\.00 kg; el documento declara 900\.00 kg \(diferencia 11\.11%\)/);
 
 // Split column headers plus pallet metadata on adjacent lines are parsed as one hierarchy.
 const palletColumns = [["No.", 32], ["ITEM CODE", 125], ["N. Vol.", 560], ["G. Vol.", 596], ["N.W.", 643], ["G.W.", 683], ["QTY", 735]];

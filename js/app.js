@@ -877,9 +877,13 @@ function pdfPalletPackingRecords(items){
       groups.push({id:`pallet-${groups.length+1}`,y:row.y,boxes:parseNumber(boxesMatch?.[1],{kind:"boxes"}),...dimensions,firstRecord:null});
     }
   }
-  groups.forEach(group=>{
-    const subtotal=rows.filter(row=>/^sub\s*totals?\s*:/i.test(row.text)).sort((a,b)=>Math.abs(a.y-group.y)-Math.abs(b.y-group.y))[0];
-    if(subtotal&&Math.abs(subtotal.y-group.y)<=60)group.grossKg=numberAt(subtotal,grossWeightX,"weight");
+  const subtotalRows=rows.filter(row=>/^sub\s*totals?\s*:/i.test(row.text)).sort((a,b)=>b.y-a.y);
+  const orderedGroups=[...groups].sort((a,b)=>b.y-a.y);
+  orderedGroups.forEach((group,index)=>{
+    const subtotal=subtotalRows[index];
+    // One subtotal belongs to one pallet. Printed blocks can place the subtotal
+    // before or after their metadata, but their vertical order remains stable.
+    if(subtotal&&subtotalRows.length===orderedGroups.length)group.grossKg=numberAt(subtotal,grossWeightX,"weight");
   });
   for(const row of rows){
     const text=normalizePdfText(row.text);
@@ -1347,6 +1351,16 @@ function validatePdfTotals(expected,actual){
   return {name,documentValue:declared,calculated:valid?computed:null,status:valid&&Math.abs(computed-declared)<=tolerance?"ok":"review",tolerance,difference:valid?computed-declared:null};
  });
 }
+function pdfMismatchMessage(mismatches){
+ const units={cantidad:"unidades",cajas:"cajas","peso neto":"kg","peso bruto":"kg",volumen:"m³"};
+ return mismatches.map(item=>{
+  const unit=units[item.name]||"";
+  const calculated=Number(item.calculated), declared=Number(item.documentValue);
+  const percent=Math.abs(declared)>0?Math.abs(calculated-declared)/Math.abs(declared)*100:0;
+  const label=item.name.charAt(0).toUpperCase()+item.name.slice(1);
+  return `${label} calculado: ${calculated.toFixed(2)} ${unit}; el documento declara ${declared.toFixed(2)} ${unit} (diferencia ${percent.toFixed(2)}%). Verifica el PDF original.`;
+ }).join(" ");
+}
 
 function pdfRecord(text,index){
  if(!text||typeof text!=="string")return null;
@@ -1534,13 +1548,14 @@ async function importarPDF(file){
  console.groupEnd();
 
  if(importadas){
+  const mismatchMessage=pdfMismatchMessage(mismatches);
   if(mismatches.length){
-    alert(`Revisar PDF: los datos calculados no coinciden con los totales declarados (${mismatches.map(item=>`${item.name}: calculado ${Number(item.calculated).toFixed(3)} vs declarado ${Number(item.documentValue).toFixed(3)}`).join(", ")}). Se conserva el cálculo parcial y se muestran ambos valores.`);
+    alert(`Revisar PDF: ${mismatchMessage}`);
   }
   const shownTotals=totals();
   const partialMsg=(pdfImportMeta.incompleteRows||pdfImportMeta.excludedRows)?` | ${pdfImportMeta.incompleteRows} fila(s) incompleta(s), ${pdfImportMeta.excludedRows} excluida(s) del cálculo total`:"";
   const validationMsg=mismatches.length?" | REVISAR: declarado vs calculado":" | totales validados";
-  const statusMsg = `PDF "${file.name}" procesado: ${importadas} ref(s) | ${Number.isFinite(declaredTotals.boxes)?declaredTotals.boxes:shownTotals.boxes} cajas | ${(shownTotals.weight).toFixed(5)} t (${(shownTotals.weight*1000).toFixed(2)} kg) | ${shownTotals.volume.toFixed(3)} m³${validationMsg}${partialMsg}${usedAiFallback?" | respaldo IA":""}${fallbackMessage}`;
+  const statusMsg = `PDF "${file.name}" procesado: ${importadas} ref(s) | ${Number.isFinite(declaredTotals.boxes)?declaredTotals.boxes:shownTotals.boxes} cajas | ${(shownTotals.weight).toFixed(5)} t (${(shownTotals.weight*1000).toFixed(2)} kg) | ${shownTotals.volume.toFixed(3)} m³${validationMsg}${partialMsg}${usedAiFallback?" | respaldo IA":""}${fallbackMessage}${mismatchMessage?` | ${mismatchMessage}`:""}`;
   $("excelHelp").textContent = statusMsg;
   alert(statusMsg);
  } else {
