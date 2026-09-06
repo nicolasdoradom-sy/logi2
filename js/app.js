@@ -234,17 +234,21 @@ function totals(){
  }
   const calculated=pieces.reduce((a,p)=>{
    const quantity=Number(p.q)||0;
-   const boxes=Number(p.boxes)||quantity;
+  const boxes=Number.isFinite(Number(p.boxes))?Number(p.boxes):quantity;
    const gross=Number(p.gw??p.wt)||0;
    const net=Number(p.nw??p.wt)||0;
    a.weight+=gross*quantity;
    a.gw+=gross*quantity;
    a.net+=net*quantity;
-   a.volume+=Number.isFinite(Number(p.volume))?Number(p.volume):p.L*p.W*p.H*boxes;
-   a.area+=p.L*p.W*boxes;
-   a.maxL=Math.max(a.maxL,p.L);
-   a.maxW=Math.max(a.maxW,p.W);
-   a.maxH=Math.max(a.maxH,p.H);
+   a.volume+=Number.isFinite(Number(p.volume))?Number(p.volume):(
+     Number.isFinite(Number(p.L))&&Number.isFinite(Number(p.W))&&Number.isFinite(Number(p.H))
+       ? Number(p.L)*Number(p.W)*Number(p.H)*boxes
+       : 0
+   );
+   if(Number.isFinite(Number(p.L))&&Number.isFinite(Number(p.W)))a.area+=Number(p.L)*Number(p.W)*boxes;
+   if(Number.isFinite(Number(p.L)))a.maxL=Math.max(a.maxL,Number(p.L));
+   if(Number.isFinite(Number(p.W)))a.maxW=Math.max(a.maxW,Number(p.W));
+   if(Number.isFinite(Number(p.H)))a.maxH=Math.max(a.maxH,Number(p.H));
    return a;
  },{weight:0,gw:0,net:0,volume:0,area:0,refs:pieces.length,maxL:0,maxW:0,maxH:0});
   if(!pdfTotalsOverride)return calculated;
@@ -715,77 +719,46 @@ function extractCellFromRow(row, column){
 }
 
 function pdfHierarchicalRecords(items){
-  const groupMarkers=items.filter(item=>/^(?:pallet|box)$/i.test(stripPageMarkers(item.str||item.text||"").trim())).map(item=>({
-    y:item.transform?.[5]??item.y,
-    marker:stripPageMarkers(item.str||item.text||"").trim()
-  })).sort((a,b)=>b.y-a.y);
-  if(groupMarkers.length<2)return null;
-
-  const numericItems=items.map(item=>({
-    ...item,
-    x:item.transform?.[4]??item.x,
-    y:item.transform?.[5]??item.y,
-    text:stripPageMarkers(item.str||item.text||"").trim()
-  }));
-  const nearValue=(label, tolerance=3)=>numericItems
-    .filter(item=>item.x>label.x&&item.x-label.x<90&&Math.abs(item.y-label.y)<=tolerance&&/^[0-9][0-9.,]*$/.test(item.text))
-    .sort((a,b)=>a.x-b.x)[0];
-  const groups=groupMarkers.map((marker,index)=>{
-    const labels=numericItems.filter(item=>item.y>=marker.y-18&&item.y<=marker.y+18);
-    const findLabel=pattern=>labels.find(item=>pattern.test(item.text));
-    const largeLabel=findLabel(/^large\s*:/i);
-    const widthLabel=findLabel(/^width\s*:/i);
-    const heightLabel=findLabel(/^height\s*:/i);
-    const boxesLabel=findLabel(/^cajas\s*:/i);
+  const rows=pdfRows(items);
+  const groupHeader=/^00\s+\S+\s+\d+\s+\S+\s+[0-9][0-9.,]*\s*KG\s+[0-9][0-9.,]*\s*KG\s+[0-9][0-9.,]*\s*M3\b/i;
+  const headerRows=rows.filter(row=>groupHeader.test(row.text));
+  if(headerRows.length<2)return null;
+  const groupMarkers=headerRows.map((row,index)=>{
+    const dimensionRow=rows[rows.indexOf(row)+1];
+    const dimensions=findPdfDimensions(dimensionRow?.text||"");
     const values={
-      L:largeLabel?parseNumber(nearValue(largeLabel)?.text):NaN,
-      W:widthLabel?parseNumber(nearValue(widthLabel)?.text):NaN,
-      H:heightLabel?parseNumber(nearValue(heightLabel)?.text):NaN,
-      boxes:boxesLabel?parseNumber(numericItems.filter(item=>item.x>boxesLabel.x&&item.x<90&&Math.abs(item.y-boxesLabel.y)<=3&&/^[0-9][0-9.,]*$/.test(item.text)).sort((a,b)=>b.x-a.x)[0]?.text):NaN
+      L:dimensions?convertPdfMeasurement({value:dimensions.L,unit:dimensions.unit||"m"},"m"):NaN,
+      W:dimensions?convertPdfMeasurement({value:dimensions.W,unit:dimensions.unit||"m"},"m"):NaN,
+      H:dimensions?convertPdfMeasurement({value:dimensions.H,unit:dimensions.unit||"m"},"m"):NaN,
+      gross:parseNumber(row.text.match(/\b([0-9][0-9.,]*)\s*KG\b/i)?.[1]),
+      net:parseNumber(row.text.match(/\b[0-9][0-9.,]*\s*KG\b[^]*?\b([0-9][0-9.,]*)\s*KG\b/i)?.[1]),
+      volume:parseNumber(row.text.match(/\b([0-9][0-9.,]*)\s*M3\b/i)?.[1])
     };
-    console.log("[pdfHierarchicalRecords] group",{index:index+1,marker:marker.marker,dimensions:values});
-    return {...marker,...values,nextY:groupMarkers[index+1]?.y??-Infinity};
+    console.log("[pdfHierarchicalRecords] group",{index:index+1,header:row.text,dimensions:{L:values.L,W:values.W,H:values.H},gross:values.gross,net:values.net,volume:values.volume});
+    return {...values,y:row.y,nextY:headerRows[index+1]?.y??-Infinity,header:row.text};
   });
 
-  const referenceItems=numericItems.filter(item=>item.x>=85&&item.x<=112&&/^\d{1,3}$/.test(item.text)&&Number(item.text)>=1&&Number(item.text)<=242)
-    .sort((a,b)=>b.y-a.y);
-  const uniqueReferences=[];
-  const seen=new Set();
-  referenceItems.forEach(item=>{
-    const reference=Number(item.text);
-    if(seen.has(reference))return;
-    seen.add(reference);
-    const group=groups.find(candidate=>candidate.y>item.y&&candidate.nextY<item.y);
-    const sameLine=numericItems.filter(candidate=>Math.abs(candidate.y-item.y)<=3);
-    const quantityItem=sameLine.find(candidate=>candidate.x>700&&/^\d/.test(candidate.text));
-    const netItem=sameLine.find(candidate=>candidate.x>=620&&candidate.x<=700&&/^[0-9][0-9.,]*$/.test(candidate.text));
-    const description=sameLine.filter(candidate=>candidate.x>=300&&candidate.x<620).map(candidate=>candidate.text).join(" ").trim();
-    const code=sameLine.filter(candidate=>candidate.x>=210&&candidate.x<300).map(candidate=>candidate.text).join(" ").trim();
-    const quantity=quantityItem?parseNumber(quantityItem.text):1;
-    const netKg=netItem?parseNumber(netItem.text):NaN;
-    uniqueReferences.push({
-      desc:`${reference}${code||description?` - ${code||description}`:""}`,
-      q:Number.isFinite(quantity)&&quantity>0?quantity:1,
-      boxes:null,L:null,W:null,H:null,volume:null,
-      wt:null,gw:null,nw:Number.isFinite(netKg)?netKg/1000:null,
-      incomplete:true,apilable:true,acostarse:false,sobresalir:false,fragil:false,peligrosa:false,
-      hierarchicalGroup:group?.marker||null
+  const productRow=/^[A-Z]{2,5}\d[\w-]+\s/;
+  const records=[];
+  groupMarkers.forEach(group=>{
+    const groupRows=rows.filter(row=>row.y<group.y&&row.y>group.nextY&&productRow.test(row.text)&&/\b(?:JG|PZ|PR)\b/i.test(row.text));
+    const quantities=groupRows.map(row=>parseNumber(row.text.match(/\b([0-9][0-9.,]*)\s+(?:JG|PZ|PR)\b/i)?.[1])||1);
+    const totalQuantity=quantities.reduce((sum,value)=>sum+value,0)||1;
+    groupRows.forEach((row,index)=>{
+      const quantity=quantities[index];
+      const code=row.text.match(/^\S+/)?.[0]||`Ítem ${records.length+1}`;
+      const unitIndex=row.text.search(/\b(?:JG|PZ|PR)\b/i);
+      const description=unitIndex>=0?row.text.slice(unitIndex+2).trim():row.text;
+      records.push({desc:`${code}${description?` - ${description}`:""}`,q:quantity,boxes:index===0?1:0,L:Number.isFinite(group.L)?group.L:null,W:Number.isFinite(group.W)?group.W:null,H:Number.isFinite(group.H)?group.H:null,wt:Number.isFinite(group.gross)?group.gross/1000/totalQuantity:null,gw:Number.isFinite(group.gross)?group.gross/1000/totalQuantity:null,nw:Number.isFinite(group.net)?group.net/1000/totalQuantity:null,volume:index===0&&Number.isFinite(group.volume)?group.volume:null,incomplete:false,apilable:true,acostarse:false,sobresalir:false,fragil:false,peligrosa:false,hierarchicalGroup:group.header});
     });
   });
-  if(uniqueReferences.length<20)return null;
+  if(records.length<20)return null;
 
-  const rows=numericItems.map(item=>item.text).join(" ");
-  const totalLabel=numericItems.filter(item=>/^totals?\s*:??$/i.test(item.text)).map(label=>({label,values:numericItems.filter(item=>Math.abs(item.y-label.y)<=4&&item.x>label.x&&/^[0-9][0-9.,]*$/.test(item.text)).sort((a,b)=>a.x-b.x)})).filter(candidate=>candidate.values.length>=5).at(-1);
-  const totalValues=totalLabel?.values||[];
-  const declared=totalValues.length>=5?{
-    volume:parseHierarchicalTotal(totalValues[1].text),netVolume:parseHierarchicalTotal(totalValues[0].text),net:parseHierarchicalTotal(totalValues[2].text),gross:parseHierarchicalTotal(totalValues[3].text),quantity:parseHierarchicalTotal(totalValues[4].text),references:uniqueReferences.length
-  }:{references:uniqueReferences.length};
-  const packageMatch=/total\s*:\s*([0-9][0-9.,]*)\s+cajas?\s+o\s+bultos?/i.exec(rows);
-  if(packageMatch)declared.boxes=parseNumber(packageMatch[1]);
-  const area=groups.reduce((sum,group)=>sum+(Number.isFinite(group.L)&&Number.isFinite(group.W)?group.L/100*group.W/100:0),0);
-  declared.area=area;
-  console.log("[detectPdfHierarchicalPdf] detected",{groups:groups.length,references:uniqueReferences.length,declared,area:area.toFixed(2)});
-  return {records:uniqueReferences,totals:declared,hierarchical:true};
+  const footer=rows.filter(row=>/^\s*[0-9][0-9.,]*\s*KG\s+[0-9][0-9.,]*\s*KG\s+[0-9][0-9.,]*\s*M3\s*$/i.test(row.text)).at(-1);
+  const footerValues=footer?.text.match(/([0-9][0-9.,]*)\s*KG\s+([0-9][0-9.,]*)\s*KG\s+([0-9][0-9.,]*)\s*M3/i);
+  const declared={gross:footerValues?parseNumber(footerValues[1]):groupMarkers.reduce((sum,group)=>sum+group.gross,0),net:footerValues?parseNumber(footerValues[2]):groupMarkers.reduce((sum,group)=>sum+group.net,0),volume:footerValues?parseNumber(footerValues[3]):groupMarkers.reduce((sum,group)=>sum+group.volume,0),boxes:groupMarkers.length,references:records.length,area:groupMarkers.reduce((sum,group)=>sum+(Number.isFinite(group.L)&&Number.isFinite(group.W)?group.L*group.W:0),0)};
+  console.log("[detectPdfHierarchicalPdf] detected",{groups:groupMarkers.length,references:records.length,declared,area:declared.area.toFixed(2)});
+  return {records,totals:declared,hierarchical:true};
 }
 
 function pdfTableRecords(items){
