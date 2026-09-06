@@ -99,4 +99,19 @@ assert.equal(palletTable.records[0].boxes, 2);
 assert.equal(palletTable.totals.volume, 0.5);
 assert.equal(palletTable.totals.gross, 12);
 
+// Group-owned metrics: SKU detail rows are not shipping references.
+const groupOwnedItems = [
+  ["PKG-01 CAJA 270 KG 224 KG 1.272 M3", 700], ["120x100x106 cm", 688],
+  ["BC0140272-40361020 2 JG", 670], ["COJINETE DE BANCADA", 658], ["____________________", 646],
+  ["PKG-02 PALET 377 KG 331 KG 1.920 M3", 630], ["120x100x160 cm", 618],
+  ["BC0140452-10361020 12 JG", 600], ["COJINETE DE BANCADA", 588], ["____________________", 576],
+  ["647 KG 555 KG 3.192 M3", 560]
+].map(([str, y]) => ({ str, transform: [1, 0, 0, 1, 10, y] }));
+const groupOwnedTable = context.api.pdfTableRecords(groupOwnedItems);
+assert.equal(groupOwnedTable.groupOwnedMetrics, true);
+assert.equal(groupOwnedTable.records.length, 2);
+assert.equal(groupOwnedTable.records[0].detailRows.length, 1);
+assert.equal(context.api.summarizePdfRecords(groupOwnedTable.records).weight, 0.647);
+assert.equal(groupOwnedTable.totals.boxes, 2);
+
 console.log("PDF parser numeric context tests passed");

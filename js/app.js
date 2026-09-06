@@ -858,6 +858,58 @@ function pdfHierarchicalRecords(items){
   return {records,totals:declared,hierarchical:true};
 }
 
+function pdfGroupOwnedRecords(items){
+  const rows=pdfRows(items);
+  const isTotal=row=>/^\s*(?:total|totales|grand total)\b/i.test(row.text);
+  const groupRows=rows.filter(row=>{
+    if(isTotal(row))return false;
+    const weights=[...row.text.matchAll(/([+-]?[0-9][0-9.,]*)\s*(?:kg|kgs|lb|lbs|ton|tons|t)\b/gi)];
+    const prefix=weights[0]?row.text.slice(0,weights[0].index):"";
+    return weights.length>=2&&/[a-z]{2,}/i.test(prefix)&&/\b[0-9][0-9.,]*\s*(?:m3|m³|cbm)\b/i.test(row.text);
+  });
+  if(!groupRows.length)return null;
+
+  const productRow=/^[A-Z]{2,8}\d[\w-]+\s/;
+  const productUnit=/\b(?:JG|PZ|PR|EA|PCS?|UN(?:D|ID)?|PIEZAS?)\b/i;
+  const productRows=rows.filter(row=>productRow.test(row.text)&&productUnit.test(row.text));
+  const productsWithOwnMetrics=productRows.filter(row=>/\b[0-9][0-9.,]*\s*(?:kg|kgs|lb|lbs|ton|tons|t|m3|m³|cbm)\b/i.test(row.text));
+  const detailSeparators=rows.filter(row=>/^\s*[_-]{8,}\s*$/.test(row.text));
+  // Group-owned metrics apply only when detail rows carry no independent load data.
+  if(!productRows.length||productsWithOwnMetrics.length||detailSeparators.length<productRows.length/2)return null;
+
+  const records=groupRows.map((row,index)=>{
+    const rowIndex=rows.indexOf(row);
+    const nextGroupIndex=index<groupRows.length-1?rows.indexOf(groupRows[index+1]):rows.length;
+    const dimensions=findPdfDimensions(rows.slice(rowIndex+1,nextGroupIndex).find(candidate=>findPdfDimensions(candidate.text))?.text||"");
+    const values=[...row.text.matchAll(/([+-]?[0-9][0-9.,]*)\s*(?:kg|kgs|lb|lbs|ton|tons|t)\b/gi)].map(match=>parseNumber(match[1],{kind:"weight"}));
+    const volume=parseNumber(row.text.match(/([+-]?[0-9][0-9.,]*)\s*(?:m3|m³|cbm)\b/i)?.[1],{kind:"volume"});
+    const details=rows.slice(rowIndex+1,nextGroupIndex).filter(candidate=>productRow.test(candidate.text)&&productUnit.test(candidate.text)).map(candidate=>candidate.text);
+    const label=row.text.replace(/\s+[0-9][0-9.,]*\s*(?:kg|kgs|lb|lbs|ton|tons|t|m3|m³|cbm)\b.*$/i,"").trim()||`Embalaje ${index+1}`;
+    return {
+      desc:label,q:1,boxes:1,
+      L:dimensions?convertPdfMeasurement({value:dimensions.L,unit:dimensions.unit||"m"},"m"):null,
+      W:dimensions?convertPdfMeasurement({value:dimensions.W,unit:dimensions.unit||"m"},"m"):null,
+      H:dimensions?convertPdfMeasurement({value:dimensions.H,unit:dimensions.unit||"m"},"m"):null,
+      wt:Number.isFinite(values[0])?values[0]/1000:null,
+      gw:Number.isFinite(values[0])?values[0]/1000:null,
+      nw:Number.isFinite(values[1])?values[1]/1000:null,
+      volume:Number.isFinite(volume)?volume:null,
+      incomplete:!Number.isFinite(values[0])||!Number.isFinite(volume),
+      groupOwnedMetrics:true,detailRows:details,
+      apilable:true,acostarse:false,sobresalir:false,fragil:false,peligrosa:false
+    };
+  });
+  const footer=rows.filter(row=>/^\s*[0-9][0-9.,]*\s*KG\s+[0-9][0-9.,]*\s*KG\s+[0-9][0-9.,]*\s*M3\s*$/i.test(row.text)).at(-1);
+  const footerValues=footer?.text.match(/([0-9][0-9.,]*)\s*KG\s+([0-9][0-9.,]*)\s*KG\s+([0-9][0-9.,]*)\s*M3/i);
+  const sum=field=>records.reduce((total,record)=>total+(Number.isFinite(Number(record[field]))?Number(record[field]):0),0);
+  return {records,totals:{
+    gross:footerValues?parseNumber(footerValues[1],{kind:"weight"}):sum("gw")*1000,
+    net:footerValues?parseNumber(footerValues[2],{kind:"weight"}):sum("nw")*1000,
+    volume:footerValues?parseNumber(footerValues[3],{kind:"volume"}):sum("volume"),
+    boxes:records.length,references:records.length
+  },hierarchical:true,groupOwnedMetrics:true};
+}
+
 function pdfPalletPackingRecords(items){
   const rows=pdfRows(items);
   const layout=pdfLayoutMetrics(rows);
@@ -966,6 +1018,8 @@ function pdfPalletPackingRecords(items){
 function pdfTableRecords(items){
   const palletPacking=pdfPalletPackingRecords(items);
   if(palletPacking)return palletPacking;
+  const groupOwned=pdfGroupOwnedRecords(items);
+  if(groupOwned)return groupOwned;
   const hierarchical=pdfHierarchicalRecords(items);
   if(hierarchical)return hierarchical;
   const rows = pdfRows(items);
