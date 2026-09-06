@@ -1,0 +1,9 @@
+{
+  "file": "PACKING_LIST_TEST_001.pdf",
+  "fixture_type": "synthetic",
+  "description": "Fixture sintético confidencial: formato plano simple de cinco referencias.",
+  "peso_bruto_kg": 90.45,
+  "volumen_m3": 0.419,
+  "area_m2": 2.455,
+  "referencias": 5
+}

@@ -1,0 +1,9 @@
+{
+  "file": "02_Packing_List_DN3047.pdf",
+  "fixture_type": "synthetic",
+  "description": "Fixture sintético confidencial: formato jerárquico con 242 referencias y totales con coma decimal.",
+  "peso_bruto_kg": 12682,
+  "volumen_m3": 94.1,
+  "area_m2": 76.24,
+  "referencias": 242
+}

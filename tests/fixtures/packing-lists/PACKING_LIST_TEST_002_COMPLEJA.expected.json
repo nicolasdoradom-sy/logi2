@@ -1,0 +1,9 @@
+{
+  "file": "PACKING_LIST_TEST_002_COMPLEJA.pdf",
+  "fixture_type": "synthetic",
+  "description": "Fixture sintético confidencial: formato plano con encabezado partido y diez referencias.",
+  "peso_bruto_kg": 288.1,
+  "volumen_m3": 0.795,
+  "area_m2": 4.978,
+  "referencias": 10
+}

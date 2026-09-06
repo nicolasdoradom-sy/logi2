@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "generate:packing-list-fixtures": "node tests/generate-synthetic-packing-list-fixtures.js",
+    "test:master-regression": "node tests/master-regression.test.js"
+  },
   "devDependencies": {
     "pdfjs-dist": "^3.11.174"
   }
