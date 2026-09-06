@@ -14,6 +14,7 @@ Cada documento confirmado se incorpora de inmediato como el binario original y u
 - Filas de pie: `TOTAL`, `SubTotals`, emitente, `Embalajes`, `Cubaje` y etiquetas de embalaje no son productos. Una fila o grupo requiere señales estructurales y métricas inequívocas.
 - Jerarquía: un grupo físico necesita un tipo de embalaje explícito y el patrón completo de dos pesos y volumen. El peso, volumen y área se cuentan una vez por grupo; los productos hijos no duplican esas métricas.
 - Totales declarados: se comparan siempre con el cálculo. Una desviación relevante debe advertirse al usuario y activa el respaldo de IA cuando corresponda; el respaldo también debe pasar esta validación.
+- Cotización: una importación con discrepancias, filas incompletas o filas excluidas queda en `Revisión requerida`. No puede generar, guardar ni imprimir cotización hasta que una persona confirme explícitamente la revisión.
 
 ## Protocolo ante una falla
 

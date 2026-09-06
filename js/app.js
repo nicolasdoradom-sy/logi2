@@ -35,8 +35,16 @@ function showPanel(n){
   updateDashboard();
   window.scrollTo({top:0,behavior:'smooth'});
 }
-function updateDashboard(){const t=typeof totals==='function'?totals():{weight:0,volume:0,refs:0};const a=typeof lastAnalysis!=='undefined'?lastAnalysis:null;const q=id=>document.getElementById(id);if(q('dashTon'))q('dashTon').textContent=(t.weight||0).toFixed(5)+' t';if(q('dashM3'))q('dashM3').textContent=(t.volume||0).toFixed(3)+' m³';if(q('dashRefs'))q('dashRefs').textContent=t.refs||0;updateQuoteButton();if(a&&typeof validation==='function'){const v=validation(a);q('dashStatus').textContent=v.level==='green'?'Aprobado':v.level==='yellow'?'Revisar':'No compatible';q('dashDot').className='status-dot '+v.level;}else if(pdfImportMeta.validation?.status==='review'){q('dashStatus').textContent='Revisar';q('dashDot').className='status-dot yellow';}else if(pdfImportMeta.incompleteRows||pdfImportMeta.excludedRows){q('dashStatus').textContent=`Parcial (${pdfImportMeta.excludedRows||pdfImportMeta.incompleteRows} filas excluidas)`;q('dashDot').className='status-dot yellow';}else{q('dashStatus').textContent='Pendiente';q('dashDot').className='status-dot';}}
-function updateQuoteButton(){const button=$("quoteGenerateBtn");if(!button)return;const enabled=typeof hasCargo==='function'&&hasCargo();button.disabled=!enabled;button.setAttribute("aria-disabled",String(!enabled));}
+function pdfNeedsReview(){return Boolean(pdfImportMeta.validation?.status==='review'&&!pdfImportMeta.validation.confirmed)}
+function updateDashboard(){const t=typeof totals==='function'?totals():{weight:0,volume:0,refs:0};const a=typeof lastAnalysis!=='undefined'?lastAnalysis:null;const q=id=>document.getElementById(id);if(q('dashTon'))q('dashTon').textContent=(t.weight||0).toFixed(5)+' t';if(q('dashM3'))q('dashM3').textContent=(t.volume||0).toFixed(3)+' m³';if(q('dashRefs'))q('dashRefs').textContent=t.refs||0;updateQuoteButton();if(pdfNeedsReview()){q('dashStatus').textContent='Revisión requerida';q('dashDot').className='status-dot yellow';}else if(a&&typeof validation==='function'){const v=validation(a);q('dashStatus').textContent=v.level==='green'?'Aprobado':v.level==='yellow'?'Revisar':'No compatible';q('dashDot').className='status-dot '+v.level;}else{q('dashStatus').textContent='Pendiente';q('dashDot').className='status-dot';}}
+function updateQuoteButton(){const button=$("quoteGenerateBtn");if(!button)return;const enabled=typeof hasCargo==='function'&&hasCargo()&&!pdfNeedsReview();button.disabled=!enabled;button.setAttribute("aria-disabled",String(!enabled));button.title=pdfNeedsReview()?"Revisa y confirma los totales del PDF antes de cotizar.":"";}
+function confirmarRevisionPdf(){
+ if(!pdfNeedsReview())return;
+ if(!confirm("Confirma que verificaste los totales del PDF y los datos de carga antes de cotizar."))return;
+ pdfImportMeta.validation.confirmed=true;
+ $("excelHelp").textContent="PDF confirmado manualmente. Puedes generar la cotización.";
+ updateDashboard();
+}
 
 const BASE_VEHICLES = [
  {name:"4 x 4",cap:1,vol:5.5,L:2.0,W:1.4,H:1.5,body:"Furgón - carpado platón",cargo:"Carga suelta / bultos / pallets",special:""},
@@ -1687,7 +1695,7 @@ async function importarPDF(file){
  pdfImportMeta={
   incompleteRows: importedTotals.incompleteRows||records.filter(record=>record.incomplete).length,
   excludedRows: importedTotals.excludedRows||0,
-  validation:{status:mismatches.length?"review":"ok",checks:validationResult,declared:declaredTotals,calculated:importedTotals}
+  validation:{status:mismatches.length||importedTotals.incompleteRows||importedTotals.excludedRows?"review":"ok",confirmed:false,checks:validationResult,declared:declaredTotals,calculated:importedTotals}
  };
  updateDashboard();
 
@@ -1712,9 +1720,9 @@ async function importarPDF(file){
   }
   const shownTotals=totals();
   const partialMsg=(pdfImportMeta.incompleteRows||pdfImportMeta.excludedRows)?` | ${pdfImportMeta.incompleteRows} fila(s) incompleta(s), ${pdfImportMeta.excludedRows} excluida(s) del cálculo total`:"";
-  const validationMsg=mismatches.length?" | REVISAR: declarado vs calculado":" | totales validados";
+  const validationMsg=pdfNeedsReview()?" | REVISIÓN REQUERIDA":" | totales validados";
   const statusMsg = `PDF "${file.name}" procesado: ${importadas} ref(s) | ${Number.isFinite(declaredTotals.boxes)?declaredTotals.boxes:shownTotals.boxes} cajas | ${(shownTotals.weight).toFixed(5)} t (${(shownTotals.weight*1000).toFixed(2)} kg) | ${shownTotals.volume.toFixed(3)} m³${validationMsg}${partialMsg}${usedAiFallback?" | respaldo IA":""}${fallbackMessage}${mismatchMessage?` | ${mismatchMessage}`:""}`;
-  $("excelHelp").textContent = statusMsg;
+  $("excelHelp").innerHTML = pdfNeedsReview()?`${esc(statusMsg)} <button class="btn ghost" type="button" onclick="confirmarRevisionPdf()">Confirmar revisión</button>`:esc(statusMsg);
   alert(statusMsg);
  } else {
   const isScanned = (!text || text.length < 30) && !lines.length;
@@ -1961,6 +1969,10 @@ function exportarExcel(){
 }
 function generarCotizacion(guardar=false){
   console.log("🔵 generarCotizacion() llamada con guardar="+guardar);
+  if(pdfNeedsReview()){
+    $("quote").innerHTML='<div class="alert yellow">La importación del PDF requiere revisión antes de generar una cotización.</div>';
+    return;
+  }
   // Siempre recalculamos para que la cotización use los últimos datos ingresados.
   if(!hasCargo()){
     console.log("❌ No hay carga registrada");
