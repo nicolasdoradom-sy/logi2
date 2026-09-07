@@ -920,7 +920,7 @@ function pdfGroupOwnedRecords(items){
         groupNetT:ownsGroupMetrics&&Number.isFinite(values[1])?values[1]/1000:null,
         groupVolume:ownsGroupMetrics&&Number.isFinite(volume)?volume:null,
         incomplete:!Number.isFinite(values[0])||!Number.isFinite(volume),
-        groupOwnedMetrics:true,groupChildCount:children.length,
+        groupOwnedMetrics:true,groupChildCount:children.length,detailRows:ownsGroupMetrics?details:[],
         apilable:true,acostarse:false,sobresalir:false,fragil:false,peligrosa:false
       };
     });
@@ -966,7 +966,9 @@ function pdfPalletPackingRecords(items){
   const within=(item,x)=>{const bounds=columnBounds(x);return item.x>=bounds.min&&item.x<bounds.max};
   const numberAt=(row,x,kind)=>{
     const numericItems=row.items.filter(candidate=>within(candidate,x)&&/[0-9]/.test(candidate.text)).sort((a,b)=>a.x-b.x);
-    const joined=parseNumber(numericItems.map(candidate=>candidate.text).join(""),{kind});
+    const joinedText=numericItems.map(candidate=>candidate.text).join("");
+    const separatorCounts={comma:(joinedText.match(/,/g)||[]).length,dot:(joinedText.match(/\./g)||[]).length};
+    const joined=separatorCounts.comma>1||separatorCounts.dot>1?NaN:parseNumber(joinedText,{kind});
     if(Number.isFinite(joined))return joined;
     return numericItems
       .map(candidate=>({value:parseNumber(candidate.text,{kind}),distance:Math.abs(candidate.x-x)}))

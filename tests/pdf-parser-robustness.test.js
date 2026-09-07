@@ -96,7 +96,8 @@ const palletTable = context.api.pdfTableRecords(palletItems);
 assert.equal(palletTable.hierarchical, true);
 assert.equal(palletTable.records.length, 1);
 assert.equal(palletTable.records[0].boxes, 2);
-assert.equal(palletTable.totals.volume, 0.5);
+assert.equal(palletTable.records[0].volume, 0.5);
+assert.equal(palletTable.totals.volume, 0.6);
 assert.equal(palletTable.totals.gross, 12);
 
 // Group-owned metrics: SKU detail rows are not shipping references.
