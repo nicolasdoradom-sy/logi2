@@ -19,7 +19,7 @@ function createContext() {
     window: { scrollTo() {}, print() {} }, localStorage: { getItem() { return null; }, setItem() {} },
     alert() {}, confirm() { return true; }, setTimeout(callback) { callback(); }, clearTimeout() {}, pdfjsLib
   };
-  vm.runInNewContext(`${source}\nthis.runImport = importarPDF; this.getTotals = () => totals();`, context);
+  vm.runInNewContext(`${source}\nthis.runImport = importarPDF; this.getTotals = () => totals(); this.getAnalysisTotals = () => analyzeSet().t; this.getRenderedTotals = () => ({ dashboard: { weight: document.getElementById("dashTon").textContent, volume: document.getElementById("dashM3").textContent, refs: document.getElementById("dashRefs").textContent }, summary: { weight: document.getElementById("totalTon").textContent, volume: document.getElementById("totalM3").textContent, area: document.getElementById("totalArea").textContent, refs: document.getElementById("totalRefs").textContent } });`, context);
   return context;
 }
 
@@ -49,11 +49,26 @@ function matchesDeclaredPrecision(actual, expected) {
       const context = createContext();
       await context.runImport({ name: expected.file, arrayBuffer: async () => data.buffer });
       const totals = context.getTotals();
+      const analysisTotals = context.getAnalysisTotals();
       const actual = { peso_bruto_kg: totals.weight * 1000, volumen_m3: totals.volume, area_m2: totals.area, referencias: totals.refs };
+      const rendered = context.getRenderedTotals();
+      const displayedTotalsConsistent = rendered.dashboard.weight === `${totals.weight.toFixed(5)} t`
+        && rendered.dashboard.volume === `${totals.volume.toFixed(3)} m³`
+        && rendered.dashboard.refs === totals.refs
+        && rendered.summary.weight === `${totals.weight.toFixed(5)} t (${(totals.weight * 1000).toFixed(2)} kg)`
+        && rendered.summary.volume === `${totals.volume.toFixed(3)} m³`
+        && rendered.summary.area === `${totals.area.toFixed(3)} m²`
+        && rendered.summary.refs === totals.refs;
+      const quoteTotalsConsistent = analysisTotals.weight === totals.weight
+        && analysisTotals.volume === totals.volume
+        && analysisTotals.area === totals.area
+        && analysisTotals.refs === totals.refs;
       const passed = isClose(actual.peso_bruto_kg, expected.peso_bruto_kg, 0.01)
         && matchesDeclaredPrecision(actual.volumen_m3, expected.volumen_m3)
         && matchesDeclaredPrecision(actual.area_m2, expected.area_m2)
-        && actual.referencias === expected.referencias;
+        && actual.referencias === expected.referencias
+        && displayedTotalsConsistent
+        && quoteTotalsConsistent;
       results.push({ fixture: expected.file, status: passed ? "PASS" : "FAIL", expected: `${expected.peso_bruto_kg} kg | ${expected.volumen_m3} m³ | ${expected.area_m2} m² | ${expected.referencias} ref`, actual: `${actual.peso_bruto_kg.toFixed(3)} kg | ${actual.volumen_m3.toFixed(3)} m³ | ${actual.area_m2.toFixed(3)} m² | ${actual.referencias} ref` });
     } catch (error) {
       results.push({ fixture: expected.file, status: "ERROR", expected: "importación correcta", actual: error.message });

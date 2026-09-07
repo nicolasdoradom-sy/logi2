@@ -177,6 +177,8 @@ function resetPieceForm(){
 }
 function agregarPieza(){
  const p=addPieceObject(); if(!p)return;
+ pdfTotalsOverride=null;
+ pdfImportMeta={ incompleteRows: 0, excludedRows: 0, validation: null };
  if(editingIndex!==null){pieces[editingIndex]=p}else pieces.push(p);
  renderPieces(); resetPieceForm(); scrollToId("pieceForm");
 }
@@ -186,7 +188,7 @@ function editarPieza(i){
  $("pApilable").checked=p.apilable;$("pAcostarse").checked=p.acostarse;$("pSobresalir").checked=p.sobresalir;$("pFragil").checked=p.fragil;$("pPeligrosa").checked=p.peligrosa;
  calcPiecePreview();scrollToId("pieceForm");
 }
-function eliminarPieza(i){if(confirm("¿Eliminar esta referencia?")){pieces.splice(i,1);renderPieces()}}
+function eliminarPieza(i){if(confirm("¿Eliminar esta referencia?")){pdfTotalsOverride=null;pdfImportMeta={ incompleteRows: 0, excludedRows: 0, validation: null };pieces.splice(i,1);renderPieces()}}
 function renderPieces(){
  let el=$("pieceList");
  if(!pieces.length){el.innerHTML='<div class="empty">No hay referencias guardadas. Agrega la primera pieza o grupo, o impórtalas desde Excel o PDF.</div>'}
@@ -1684,9 +1686,6 @@ async function importarPDF(file){
   });
  }
 
- renderPieces();
- updateDashboard();
-
  const severeMismatch=hasSeverePdfMismatch(mismatches);
  pdfTotalsOverride=severeMismatch&&table.hierarchical?{
   ...(Number.isFinite(declaredTotals.gross)?{weight:declaredTotals.gross/1000,gw:declaredTotals.gross/1000}:{}),
@@ -1699,6 +1698,7 @@ async function importarPDF(file){
   excludedRows: importedTotals.excludedRows||0,
   validation:{status:mismatches.length||importedTotals.incompleteRows||importedTotals.excludedRows?"review":"ok",confirmed:false,checks:validationResult,declared:declaredTotals,calculated:importedTotals}
  };
+ renderPieces();
  updateDashboard();
 
  // MODO DEBUG estructurado en consola
@@ -2138,7 +2138,7 @@ function verFicha(i){
 }
 function cerrarFicha(){$("vehicleModalOverlay").classList.remove("open");}
 function restaurarVehiculos(){if(confirm("¿Restaurar la tabla maestra a los valores base?")){vehicles=BASE_VEHICLES.map(v=>({...v}));renderVehicles();}}
-function reiniciarTodo(){if(!confirm("Esto borrará la solicitud, las piezas y el análisis. ¿Continuar?"))return;pieces=[];lastAnalysis=null;document.querySelectorAll("input").forEach(i=>{if(i.type!=="checkbox")i.value=""});document.querySelectorAll("select").forEach(s=>s.selectedIndex=0);$("pCant").value=1;$("contCant").value=1;renderPieces();$("alerts").innerHTML='<div class="alert blue">Solicitud reiniciada. Puedes empezar una nueva.</div>';$("recommendation").innerHTML="";$("quote").innerHTML='<div class="empty">Aún no hay cotización.</div>';toggleContainer();window.scrollTo({top:0,behavior:"smooth"})}
+function reiniciarTodo(){if(!confirm("Esto borrará la solicitud, las piezas y el análisis. ¿Continuar?"))return;pieces=[];lastAnalysis=null;pdfTotalsOverride=null;pdfImportMeta={ incompleteRows: 0, excludedRows: 0, validation: null };document.querySelectorAll("input").forEach(i=>{if(i.type!=="checkbox")i.value=""});document.querySelectorAll("select").forEach(s=>s.selectedIndex=0);$("pCant").value=1;$("contCant").value=1;renderPieces();$("alerts").innerHTML='<div class="alert blue">Solicitud reiniciada. Puedes empezar una nueva.</div>';$("recommendation").innerHTML="";$("quote").innerHTML='<div class="empty">Aún no hay cotización.</div>';toggleContainer();window.scrollTo({top:0,behavior:"smooth"})}
 function guardarCotizacion(a,totalCotizado){
   if(!lastAnalysis){alert("No hay análisis para guardar.");return}
   const id=Math.random().toString(36).slice(2,8).toUpperCase();
